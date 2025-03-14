@@ -52,7 +52,7 @@
       width: 28px;
       height: 28px;
     }
-    /* New image scaling buttons added to toolbar */
+    /* New scaling buttons styling */
     #toolbar .imgScaleBtn {
       background: #FFD700;
       font-weight: bold;
@@ -139,9 +139,9 @@
     <button onclick="addRectangle()" title="Add Rectangle">▭</button>
     <button onclick="addFloatingText()" title="Add Floating Text">Floating</button>
     <button onclick="addImage()" title="Add Image">Image</button>
-    <!-- New image scaling buttons (for mobile and keyboard alternative) -->
-    <button class="imgScaleBtn" onclick="scaleImage(0.1)" title="Increase Image Size">Img +</button>
-    <button class="imgScaleBtn" onclick="scaleImage(-0.1)" title="Decrease Image Size">Img –</button>
+    <!-- Scaling buttons -->
+    <button class="imgScaleBtn" onclick="scaleImage(0.1)" title="Increase Size">+</button>
+    <button class="imgScaleBtn" onclick="scaleImage(-0.1)" title="Decrease Size">–</button>
     <button onclick="setMode(Mode.CONNECT)" title="Connect">↔</button>
     <button onclick="setMode(Mode.DISCONNECT)" title="Disconnect">←×→</button>
     <button onclick="setMode(Mode.SELECT)" title="Select/Move">☚</button>
@@ -326,14 +326,14 @@
         return displayLines;
       }
       adjustSize(ctx) {
-        // For image nodes, use image dimensions.
+        // For image nodes, use image dimensions and apply manualScale
         if (this.shape === "image" && this.image) {
           const maxDimension = 200;
           let iw = this.image.naturalWidth;
           let ih = this.image.naturalHeight;
           let scale = Math.min(1, maxDimension / iw, maxDimension / ih);
-          this.displayWidth = iw * scale;
-          this.displayHeight = ih * scale;
+          this.displayWidth = iw * scale * this.manualScale;
+          this.displayHeight = ih * scale * this.manualScale;
           return;
         }
         let safeText = this.text.trim();
@@ -429,34 +429,28 @@
           } else {
             startY = this.y - totalTextHeight / 2 + lineHeight / 2;
           }
-          if (this.shape === 'circle' || this.shape === 'square' || this.shape === 'rectangle' || this.shape === 'triangle') {
-            ctx.save();
-            if (this.shape === 'circle') {
-              ctx.beginPath();
-              ctx.arc(this.x, this.y, this.displayRadius - 5, 0, Math.PI * 2);
-              ctx.clip();
-            } else if (this.shape === 'square' || this.shape === 'rectangle') {
-              ctx.beginPath();
-              ctx.rect(this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
-              ctx.clip();
-            } else if (this.shape === 'triangle') {
-              ctx.beginPath();
-              const halfW = this.displayWidth / 2, halfH = this.displayHeight / 2;
-              ctx.moveTo(this.x, this.y - halfH + 3);
-              ctx.lineTo(this.x - halfW + 3, this.y + halfH - 3);
-              ctx.lineTo(this.x + halfW - 3, this.y + halfH - 3);
-              ctx.closePath();
-              ctx.clip();
-            }
-            for (let i = 0; i < displayLines.length; i++) {
-              ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
-            }
-            ctx.restore();
-          } else if (this.shape === 'floating') {
-            for (let i = 0; i < displayLines.length; i++) {
-              ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
-            }
+          ctx.save();
+          if (this.shape === 'circle') {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.displayRadius - 5, 0, Math.PI * 2);
+            ctx.clip();
+          } else if (this.shape === 'square' || this.shape === 'rectangle') {
+            ctx.beginPath();
+            ctx.rect(this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+            ctx.clip();
+          } else if (this.shape === 'triangle') {
+            ctx.beginPath();
+            const halfW = this.displayWidth / 2, halfH = this.displayHeight / 2;
+            ctx.moveTo(this.x, this.y - halfH + 3);
+            ctx.lineTo(this.x - halfW + 3, this.y + halfH - 3);
+            ctx.lineTo(this.x + halfW - 3, this.y + halfH - 3);
+            ctx.closePath();
+            ctx.clip();
           }
+          for (let i = 0; i < displayLines.length; i++) {
+            ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
+          }
+          ctx.restore();
         }
       }
       contains(x, y) {
@@ -576,7 +570,6 @@
         this.canvas.addEventListener("touchstart", (event) => {
           event.preventDefault();
           const { x, y } = getWorldCoords(event);
-          // Long-press detection for mobile editing:
           longPressTimer = setTimeout(() => {
             for (let i = this.nodes.length - 1; i >= 0; i--) {
               const node = this.nodes[i];
@@ -1035,7 +1028,6 @@
       input.click();
     }
     function resetConfigDefaults() {
-      // Reset configuration input values to their defaults.
       document.getElementById("configFill").value = "#FFD700";
       document.getElementById("configText").value = "#000000";
       document.getElementById("configBorder").value = "#333333";
@@ -1097,12 +1089,12 @@
       } else if ((event.key === "Delete") && document.activeElement !== editorArea) {
         deleteNode();
       } else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
-        // Use event.key and keyCode fallback for scaling.
+        // Keyboard shortcuts for scaling: "=" or "+" increases, "-" decreases.
         if (event.key === "=" || event.key === "+" || event.keyCode === 187) {
           if (mindMap.selectedNode.shape === "image") {
             mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale + 0.1);
           } else {
-            mindMap.selectedNode.manualScale += 0.1;
+            mindMap.selectedNode.manualScale = Math.max(1, mindMap.selectedNode.manualScale + 0.1);
           }
           scheduleDraw();
           pushState();
@@ -1133,13 +1125,66 @@
       makeDraggable(editorModal);
     });
     
-    /* --- Additional function for on-screen image scaling (for mobile) --- */
+    /* --- Additional function for on-screen scaling (for mobile and button clicks) --- */
     function scaleImage(delta) {
-      if (mindMap.selectedNode && mindMap.selectedNode.shape === "image") {
-        mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale + delta);
-        scheduleDraw();
-        pushState();
+      const selected = mindMap.selectedNode;
+      if (!selected) return;
+      if (selected.shape === "image") {
+        selected.manualScale = Math.max(0.1, selected.manualScale + delta);
+      } else {
+        selected.manualScale = Math.max(1, selected.manualScale + delta);
       }
+      scheduleDraw();
+      pushState();
+    }
+    
+    /* --- Draggable Modal (with touch support) --- */
+    function makeDraggable(el) {
+      const header = el.querySelector(".modalHeader");
+      if (!header) return;
+      header.onmousedown = function(e) {
+        e = e || window.event;
+        e.preventDefault();
+        let pos3 = e.clientX, pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+        function elementDrag(e) {
+          e = e || window.event;
+          e.preventDefault();
+          let pos1 = pos3 - e.clientX;
+          let pos2 = pos4 - e.clientY;
+          pos3 = e.clientX;
+          pos4 = e.clientY;
+          el.style.top = (el.offsetTop - pos2) + "px";
+          el.style.left = (el.offsetLeft - pos1) + "px";
+        }
+        function closeDragElement() {
+          document.onmouseup = null;
+          document.onmousemove = null;
+        }
+      };
+      header.addEventListener("touchstart", function(e) {
+        e = e || window.event;
+        e.preventDefault();
+        let pos3 = e.touches[0].clientX, pos4 = e.touches[0].clientY;
+        const touchMove = function(e) {
+          e = e || window.event;
+          e.preventDefault();
+          let clientX = e.touches[0].clientX, clientY = e.touches[0].clientY;
+          let pos1 = pos3 - clientX;
+          let pos2 = pos4 - clientY;
+          pos3 = clientX;
+          pos4 = clientY;
+          el.style.top = (el.offsetTop - pos2) + "px";
+          el.style.left = (el.offsetLeft - pos1) + "px";
+        };
+        const touchEnd = function() {
+          document.removeEventListener("touchmove", touchMove);
+          document.removeEventListener("touchend", touchEnd);
+        };
+        document.addEventListener("touchmove", touchMove, {passive: false});
+        document.addEventListener("touchend", touchEnd);
+      }, {passive: false});
     }
   </script>
 </body>
