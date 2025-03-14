@@ -77,12 +77,15 @@
       cursor: move;
       user-select: none;
     }
+    /* Editor modal: keep left–aligned for professional editing */
     #editorArea {
       width: 100%;
       height: 150px;
       border: 1px solid #ccc;
       padding: 8px;
       overflow: auto;
+      white-space: pre-wrap;
+      writing-mode: horizontal-tb;
     }
     #charCount {
       font-size: 10px;
@@ -106,6 +109,15 @@
       width: 100%;
       padding: 2px;
     }
+    #configModal select {
+      margin-top: 2px;
+      width: 100%;
+      padding: 2px;
+    }
+    #configModal .edgeGlobalContainer {
+      margin-top: 6px;
+      font-size: 12px;
+    }
     #configModal .selectedHighlightLabel {
       margin-top: 6px;
       font-size: 12px;
@@ -120,6 +132,8 @@
     <button onclick="addSquare()" title="Add Square">□</button>
     <button onclick="addTriangle()" title="Add Triangle">△</button>
     <button onclick="addRectangle()" title="Add Rectangle">▭</button>
+    <button onclick="addFloatingText()" title="Add Floating Text">Floating</button>
+    <button onclick="addImage()" title="Add Image">Image</button>
     <button onclick="setMode(Mode.CONNECT)" title="Connect">↔</button>
     <button onclick="setMode(Mode.DISCONNECT)" title="Disconnect">←×→</button>
     <button onclick="setMode(Mode.SELECT)" title="Select/Move">☚</button>
@@ -127,7 +141,7 @@
     <button onclick="zoomIn()" title="Zoom In">＋</button>
     <button onclick="zoomOut()" title="Zoom Out">－</button>
     <button onclick="openConfig()" title="Configure Selected Node/Edges">Config</button>
-    <button onclick="saveAsImage('image/png')" title="Save as PNG">Save PNG</button>
+    <button onclick="saveAsImage()" title="Save as PNG">Save PNG</button>
     <button onclick="saveJSON()" title="Save JSON">Save JSON</button>
     <button onclick="loadJSON()" title="Load JSON">Load JSON</button>
     <button onclick="undo()" title="Undo (Ctrl+Z)">Undo</button>
@@ -157,7 +171,7 @@
         <input type="color" id="configFill" value="#FFD700" />
       </label>
       <label>Text Color:
-        <input type="color" id="configText" value="#ffffff" />
+        <input type="color" id="configText" value="#000000" />
       </label>
       <label>Border Color:
         <input type="color" id="configBorder" value="#333333" />
@@ -167,6 +181,23 @@
       </label>
       <label>Manual Scale (for node size):
         <input type="number" id="configScale" value="1" min="1" step="0.1" />
+      </label>
+      <label>Font Family:
+        <select id="configFont">
+          <option value="Roboto, Arial, sans-serif">Roboto</option>
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="Times New Roman, serif">Times New Roman</option>
+          <option value="Courier New, monospace">Courier New</option>
+        </select>
+      </label>
+      <label>Font Size:
+        <input type="number" id="configFontSize" value="16" min="8" max="72" step="1" />
+      </label>
+      <label>
+        <input type="checkbox" id="configBold" /> Bold
+      </label>
+      <label>
+        <input type="checkbox" id="configItalic" /> Italic
       </label>
       <label class="selectedHighlightLabel">Selected Node Highlight Color:
         <input type="color" id="configHighlight" value="#add8e6" />
@@ -180,6 +211,11 @@
       <label>Line Thickness:
         <input type="number" id="configLineThick" value="3" min="1" step="0.5" />
       </label>
+      <div class="edgeGlobalContainer">
+        <label>
+          <input type="checkbox" id="edgeGlobal" /> Apply to all edges
+        </label>
+      </div>
     </div>
     <div style="text-align:right; margin-top:8px;">
       <button onclick="closeConfig(true)">Apply</button>
@@ -196,10 +232,21 @@
     let zoomLevel = 1;
     let globalLineColor = document.getElementById("configLine").value;
     let globalLineThickness = parseFloat(document.getElementById("configLineThick").value);
-    let selectedHighlightColor = document.getElementById("configHighlight").value; // Default: light blue
+    let selectedHighlightColor = document.getElementById("configHighlight").value;
     let nextNodeId = 1;
     let undoStack = [];
     let redoStack = [];
+    let connectionSourceNode = null;
+    
+    // Global text measurement cache.
+    const measureCache = new Map();
+    function measureText(ctx, text) {
+      const key = ctx.font + "|" + text;
+      if (measureCache.has(key)) return measureCache.get(key);
+      const m = ctx.measureText(text).width;
+      measureCache.set(key, m);
+      return m;
+    }
     
     // Get canvas and context.
     const canvas = document.getElementById("mindmapCanvas");
@@ -207,133 +254,200 @@
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     
-    // Mode enumeration.
-    const Mode = {
-      SELECT: 'select',
-      CONNECT: 'connect',
-      DISCONNECT: 'disconnect'
-    };
-    let currentMode = Mode.SELECT;
-    let connectionSourceNode = null;
+    // Throttle redraw.
+    let redrawScheduled = false;
+    function scheduleDraw() {
+      if (!redrawScheduled) {
+        redrawScheduled = true;
+        requestAnimationFrame(() => {
+          mindMap.draw();
+          redrawScheduled = false;
+        });
+      }
+    }
     
-    /* Node class – supports multiple shapes, dynamic sizing, rich text, and manual scale */
+    // Mode enumeration.
+    const Mode = { SELECT: 'select', CONNECT: 'connect', DISCONNECT: 'disconnect' };
+    let currentMode = Mode.SELECT;
+    
+    /* Node class */
     class Node {
       constructor(x, y, text = "New Node", shape = 'circle', color = "#FFD700") {
         this.id = nextNodeId++;
         this.x = x;
         this.y = y;
-        this.text = text || " "; // Ensure nonempty text
+        this.text = text || " ";
         this.shape = shape;
         this.color = color;
-        this.textColor = "#ffffff";
+        this.textColor = "#000000";  // Standard default text color.
         this.strokeColor = "#333333";
         this.strokeThickness = 2;
         this.manualScale = 1;
+        // Font settings.
+        this.fontFamily = "Roboto, Arial, sans-serif";
+        this.fontSize = 16;
+        this.fontWeight = "normal";
+        this.fontStyle = "normal";
+        // For image nodes.
+        this.image = null;
+        // Cached computed values.
+        this._cachedText = null;
+        this._cachedManualScale = null;
+        this._cachedDisplayLines = null;
+        this._cachedAvailableWidth = null;
+      }
+      getDisplayLines(ctx, availableWidth) {
+        if (this.shape === "image") return [];
+        let safeText = this.text.trim();
+        if (safeText.toLowerCase() === "<br>" || safeText === "") safeText = "Empty";
+        if (safeText.length > 5000) safeText = safeText.substring(0, 5000) + "...";
+        const lines = safeText.split("\n").slice(0, 20);
+        if (this._cachedDisplayLines && this._cachedAvailableWidth === availableWidth) return this._cachedDisplayLines;
+        let displayLines = [];
+        for (let line of lines) {
+          if (measureText(ctx, line) > availableWidth) {
+            while (measureText(ctx, line + "...") > availableWidth && line.length > 0) {
+              line = line.slice(0, -1);
+            }
+            line += "...";
+          }
+          displayLines.push(line);
+        }
+        this._cachedDisplayLines = displayLines;
+        this._cachedAvailableWidth = availableWidth;
+        return displayLines;
       }
       adjustSize(ctx) {
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = this.text;
-        const plainText = tempDiv.innerText.trim() === "" ? " " : tempDiv.innerText;
-        const lines = plainText.split("\n");
-        ctx.font = "16px Roboto, Arial, sans-serif";
+        // For image nodes, use image dimensions.
+        if (this.shape === "image" && this.image) {
+          const maxDimension = 200;
+          let iw = this.image.naturalWidth;
+          let ih = this.image.naturalHeight;
+          let scale = Math.min(1, maxDimension / iw, maxDimension / ih);
+          this.displayWidth = iw * scale;
+          this.displayHeight = ih * scale;
+          return;
+        }
+        let safeText = this.text.trim();
+        if (safeText.toLowerCase() === "<br>") safeText = "";
+        if (safeText.length > 5000) safeText = safeText.substring(0, 5000) + "...";
+        const lines = safeText.split("\n").slice(0, 20);
+        if (this._cachedText === safeText && this._cachedManualScale === this.manualScale) return;
+        this._cachedText = safeText;
+        this._cachedManualScale = this.manualScale;
+        ctx.font = `${this.fontStyle} ${this.fontWeight} ${this.fontSize}px ${this.fontFamily}`;
         let maxLineWidth = 0;
         for (let line of lines) {
-          maxLineWidth = Math.max(maxLineWidth, ctx.measureText(line).width);
+          maxLineWidth = Math.max(maxLineWidth, measureText(ctx, line));
         }
         const padding = 20;
-        const maxAutoCircle = 100;
-        const maxAutoSquare = 200;
-        const maxAutoRectWidth = 200;
-        const maxAutoTriangle = 200;
+        const maxAutoCircle = 100, maxAutoSquare = 200, maxAutoRectWidth = 200, maxAutoTriangle = 200;
         if (this.shape === 'circle') {
           let autoRadius = (maxLineWidth + padding) / 2;
           autoRadius = Math.max(40, autoRadius);
-          if(autoRadius > maxAutoCircle) autoRadius = maxAutoCircle;
+          if (autoRadius > maxAutoCircle) autoRadius = maxAutoCircle;
           this.displayRadius = autoRadius * this.manualScale;
         } else if (this.shape === 'square') {
           let autoSize = maxLineWidth + padding;
           autoSize = Math.max(autoSize, 40 * GOLDEN_RATIO);
-          if(autoSize > maxAutoSquare) autoSize = maxAutoSquare;
+          if (autoSize > maxAutoSquare) autoSize = maxAutoSquare;
           this.displayWidth = autoSize * this.manualScale;
           this.displayHeight = autoSize * this.manualScale;
         } else if (this.shape === 'rectangle') {
           let autoWidth = maxLineWidth + padding;
           autoWidth = Math.max(autoWidth, 40 * GOLDEN_RATIO);
-          if(autoWidth > maxAutoRectWidth) autoWidth = maxAutoRectWidth;
+          if (autoWidth > maxAutoRectWidth) autoWidth = maxAutoRectWidth;
           this.displayWidth = autoWidth * this.manualScale;
-          // Force golden ratio.
           this.displayHeight = (autoWidth / GOLDEN_RATIO) * this.manualScale;
         } else if (this.shape === 'triangle') {
           let autoWidth = maxLineWidth + padding;
           autoWidth = Math.max(autoWidth, 40 * GOLDEN_RATIO);
-          if(autoWidth > maxAutoTriangle) autoWidth = maxAutoTriangle;
+          if (autoWidth > maxAutoTriangle) autoWidth = maxAutoTriangle;
           this.displayWidth = autoWidth * this.manualScale;
-          this.displayHeight = Math.round(autoWidth * Math.sqrt(3)/2) * this.manualScale;
+          this.displayHeight = Math.round(autoWidth * Math.sqrt(3) / 2) * this.manualScale;
+        } else if (this.shape === 'floating') {
+          let textWidth = 0;
+          for (let line of lines) {
+            textWidth = Math.max(textWidth, measureText(ctx, line));
+          }
+          this.displayWidth = textWidth + 20;
+          this.displayHeight = lines.length * (this.fontSize + 4) + 10;
         }
-      }
-      truncateLine(ctx, line, maxWidth) {
-        let ellipsis = "...";
-        if(ctx.measureText(line).width <= maxWidth) return line;
-        while(ctx.measureText(line + ellipsis).width > maxWidth && line.length > 0) {
-          line = line.slice(0, -1);
-        }
-        return line + ellipsis;
       }
       draw(ctx) {
         this.adjustSize(ctx);
-        ctx.beginPath();
-        if (this.shape === 'circle') {
-          ctx.arc(this.x, this.y, this.displayRadius, 0, Math.PI * 2);
-        } else if (this.shape === 'square' || this.shape === 'rectangle') {
-          ctx.rect(this.x - this.displayWidth/2, this.y - this.displayHeight/2, this.displayWidth, this.displayHeight);
-        } else if (this.shape === 'triangle') {
-          const halfW = this.displayWidth/2;
-          const halfH = this.displayHeight/2;
-          ctx.moveTo(this.x, this.y - halfH);
-          ctx.lineTo(this.x - halfW, this.y + halfH);
-          ctx.lineTo(this.x + halfW, this.y + halfH);
-          ctx.closePath();
-        }
-        ctx.fillStyle = this.color;
-        ctx.fill();
-        ctx.lineWidth = this.strokeThickness;
-        ctx.strokeStyle = this.strokeColor;
-        ctx.stroke();
-        // Draw text.
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = this.text;
-        let plainText = tempDiv.innerText || " ";
-        let lines = plainText.split("\n");
-        let availableWidth = (this.shape === 'circle') ? (this.displayRadius * 2 - 10) : (this.displayWidth - 10);
-        for (let i = 0; i < lines.length; i++) {
-          lines[i] = this.truncateLine(ctx, lines[i], availableWidth);
-        }
-        ctx.fillStyle = this.textColor;
-        ctx.font = "16px Roboto, Arial, sans-serif";
-        ctx.textAlign = "center";
-        let lineHeight = 20;
-        let totalTextHeight = lines.length * lineHeight;
-        let startY = this.y - totalTextHeight/2 + lineHeight/2;
-        if(this.shape === 'triangle'){
-          startY += this.displayHeight/6;
-        }
-        if(this.shape === 'triangle'){
-          ctx.save();
-          const halfW = this.displayWidth/2;
-          const halfH = this.displayHeight/2;
+        ctx.font = `${this.fontStyle} ${this.fontWeight} ${this.fontSize}px ${this.fontFamily}`;
+        ctx.textBaseline = "middle";
+        if (this.shape === "image" && this.image) {
+          ctx.drawImage(this.image, this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+        } else if (this.shape !== "floating") {
           ctx.beginPath();
-          ctx.moveTo(this.x, this.y - halfH + 5);
-          ctx.lineTo(this.x - halfW + 5, this.y + halfH - 5);
-          ctx.lineTo(this.x + halfW - 5, this.y + halfH - 5);
-          ctx.closePath();
-          ctx.clip();
-          for (let i = 0; i < lines.length; i++){
-            ctx.fillText(lines[i], this.x, startY + i * lineHeight);
+          if (this.shape === 'circle') {
+            ctx.arc(this.x, this.y, this.displayRadius, 0, Math.PI * 2);
+          } else if (this.shape === 'square' || this.shape === 'rectangle') {
+            ctx.rect(this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+          } else if (this.shape === 'triangle') {
+            const halfW = this.displayWidth / 2, halfH = this.displayHeight / 2;
+            ctx.moveTo(this.x, this.y - halfH);
+            ctx.lineTo(this.x - halfW, this.y + halfH);
+            ctx.lineTo(this.x + halfW, this.y + halfH);
+            ctx.closePath();
           }
-          ctx.restore();
-        } else {
-          for (let i = 0; i < lines.length; i++){
-            ctx.fillText(lines[i], this.x, startY + i * lineHeight);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+          ctx.lineWidth = this.strokeThickness;
+          ctx.strokeStyle = this.strokeColor;
+          ctx.stroke();
+        }
+        if (this.shape !== "image") {
+          let availableWidth;
+          if (this.shape === 'circle') {
+            availableWidth = this.displayRadius * 2 - 10;
+          } else if (this.shape === 'triangle') {
+            availableWidth = this.displayWidth * 0.7 - 10;
+          } else {
+            availableWidth = this.displayWidth - 10;
+          }
+          let displayLines = this.getDisplayLines(ctx, availableWidth);
+          ctx.fillStyle = this.textColor;
+          ctx.textAlign = "center";
+          const lineHeight = this.fontSize + 4;
+          let totalTextHeight = displayLines.length * lineHeight;
+          let startY;
+          if (this.shape === 'triangle') {
+            const halfH = this.displayHeight / 2;
+            let centroidY = this.y - halfH + (this.displayHeight * 2 / 3);
+            startY = centroidY - totalTextHeight / 2 + lineHeight / 2;
+          } else {
+            startY = this.y - totalTextHeight / 2 + lineHeight / 2;
+          }
+          if (this.shape === 'circle' || this.shape === 'square' || this.shape === 'rectangle' || this.shape === 'triangle') {
+            ctx.save();
+            if (this.shape === 'circle') {
+              ctx.beginPath();
+              ctx.arc(this.x, this.y, this.displayRadius - 5, 0, Math.PI * 2);
+              ctx.clip();
+            } else if (this.shape === 'square' || this.shape === 'rectangle') {
+              ctx.beginPath();
+              ctx.rect(this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+              ctx.clip();
+            } else if (this.shape === 'triangle') {
+              ctx.beginPath();
+              const halfW = this.displayWidth / 2, halfH = this.displayHeight / 2;
+              ctx.moveTo(this.x, this.y - halfH + 3);
+              ctx.lineTo(this.x - halfW + 3, this.y + halfH - 3);
+              ctx.lineTo(this.x + halfW - 3, this.y + halfH - 3);
+              ctx.closePath();
+              ctx.clip();
+            }
+            for (let i = 0; i < displayLines.length; i++) {
+              ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
+            }
+            ctx.restore();
+          } else if (this.shape === 'floating') {
+            for (let i = 0; i < displayLines.length; i++) {
+              ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
+            }
           }
         }
       }
@@ -342,34 +456,35 @@
           return Math.hypot(x - this.x, y - this.y) <= this.displayRadius;
         } else {
           return (
-            x >= this.x - this.displayWidth/2 &&
-            x <= this.x + this.displayWidth/2 &&
-            y >= this.y - this.displayHeight/2 &&
-            y <= this.y + this.displayHeight/2
+            x >= this.x - this.displayWidth / 2 &&
+            x <= this.x + this.displayWidth / 2 &&
+            y >= this.y - this.displayHeight / 2 &&
+            y <= this.y + this.displayHeight / 2
           );
         }
       }
     }
     
-    /* Edge class – connecting line between two nodes. */
+    /* Edge class */
     class Edge {
       constructor(from, to) {
         this.from = from;
         this.to = to;
         this.lineThickness = globalLineThickness;
+        this.lineColor = globalLineColor;
       }
       draw(ctx) {
         ctx.beginPath();
         ctx.moveTo(this.from.x, this.from.y);
         ctx.lineTo(this.to.x, this.to.y);
-        ctx.strokeStyle = globalLineColor;
+        ctx.strokeStyle = this.lineColor;
         ctx.lineWidth = this.lineThickness;
         ctx.stroke();
         ctx.closePath();
       }
     }
     
-    /* MindMap class – manages nodes, edges, interactions, and drawing. */
+    /* MindMap class */
     class MindMap {
       constructor(canvas, ctx) {
         this.canvas = canvas;
@@ -380,16 +495,78 @@
         this.dragging = false;
         this.setupEvents();
       }
-      setupEvents() {
-        const getWorldCoords = (event) => {
-          const rect = canvas.getBoundingClientRect();
-          return {
-            x: (event.clientX - rect.left) / zoomLevel,
-            y: (event.clientY - rect.top) / zoomLevel
-          };
+      getWorldCoords(event) {
+        const rect = canvas.getBoundingClientRect();
+        let clientX = event.clientX, clientY = event.clientY;
+        if (event.touches && event.touches.length > 0) {
+          clientX = event.touches[0].clientX;
+          clientY = event.touches[0].clientY;
+        }
+        return {
+          x: (clientX - rect.left) / zoomLevel,
+          y: (clientY - rect.top) / zoomLevel
         };
+      }
+      setupEvents() {
+        const getWorldCoords = (event) => this.getWorldCoords(event);
         this.canvas.addEventListener("mousedown", (event) => {
           if (editorModal.style.display === "block") return;
+          const { x, y } = getWorldCoords(event);
+          let found = false;
+          for (let i = this.nodes.length - 1; i >= 0; i--) {
+            const node = this.nodes[i];
+            if (node.contains(x, y)) {
+              this.selectedNode = node;
+              // Do not clear cache so that the beginning of the text is preserved.
+              found = true;
+              if (currentMode === Mode.SELECT) this.dragging = true;
+              if (currentMode === Mode.CONNECT || currentMode === Mode.DISCONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = node;
+                } else if (connectionSourceNode !== node) {
+                  if (currentMode === Mode.CONNECT) {
+                    if (!this.edgeExists(connectionSourceNode, node)) {
+                      this.edges.push(new Edge(connectionSourceNode, node));
+                      pushState();
+                    }
+                  } else if (currentMode === Mode.DISCONNECT) {
+                    this.removeEdge(connectionSourceNode, node);
+                    pushState();
+                  }
+                  connectionSourceNode = null;
+                }
+              }
+              break;
+            }
+          }
+          if (!found) this.selectedNode = null;
+          scheduleDraw();
+          updateStatus();
+        });
+        this.canvas.addEventListener("mousemove", (event) => {
+          if (this.dragging && this.selectedNode && currentMode === Mode.SELECT) {
+            const { x, y } = getWorldCoords(event);
+            this.selectedNode.x = x;
+            this.selectedNode.y = y;
+            scheduleDraw();
+          }
+        });
+        this.canvas.addEventListener("mouseup", () => { 
+          if (this.dragging) pushState();
+          this.dragging = false;
+        });
+        this.canvas.addEventListener("dblclick", (event) => {
+          if (editorModal.style.display === "block") return;
+          const { x, y } = getWorldCoords(event);
+          for (let node of this.nodes) {
+            if (node.contains(x, y)) {
+              openEditor(node);
+              break;
+            }
+          }
+        });
+        this.canvas.addEventListener("touchstart", (event) => {
+          event.preventDefault();
           const { x, y } = getWorldCoords(event);
           let found = false;
           for (let i = this.nodes.length - 1; i >= 0; i--) {
@@ -418,30 +595,21 @@
             }
           }
           if (!found) this.selectedNode = null;
-          this.draw();
+          scheduleDraw();
           updateStatus();
-        });
-        this.canvas.addEventListener("mousemove", (event) => {
+        }, {passive: false});
+        this.canvas.addEventListener("touchmove", (event) => {
+          event.preventDefault();
           if (this.dragging && this.selectedNode && currentMode === Mode.SELECT) {
             const { x, y } = getWorldCoords(event);
             this.selectedNode.x = x;
             this.selectedNode.y = y;
-            this.draw();
+            scheduleDraw();
           }
-        });
-        this.canvas.addEventListener("mouseup", () => { 
-          if(this.dragging) pushState();
-          this.dragging = false; 
-        });
-        this.canvas.addEventListener("dblclick", (event) => {
-          if (editorModal.style.display === "block") return;
-          const { x, y } = getWorldCoords(event);
-          for (let node of this.nodes) {
-            if (node.contains(x, y)) {
-              openEditor(node);
-              break;
-            }
-          }
+        }, {passive: false});
+        this.canvas.addEventListener("touchend", (event) => {
+          if (this.dragging) pushState();
+          this.dragging = false;
         });
       }
       edgeExists(nodeA, nodeB) {
@@ -455,18 +623,18 @@
           !((edge.from === nodeA && edge.to === nodeB) ||
             (edge.from === nodeB && edge.to === nodeA))
         );
-        this.draw();
+        scheduleDraw();
       }
       addNode(node) {
         this.nodes.push(node);
-        this.draw();
+        scheduleDraw();
         pushState();
       }
       deleteNode(node) {
         this.nodes = this.nodes.filter(n => n !== node);
         this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
         if (this.selectedNode === node) this.selectedNode = null;
-        this.draw();
+        scheduleDraw();
         pushState();
       }
       draw() {
@@ -485,10 +653,10 @@
               ctx.arc(node.x, node.y, node.displayRadius + 4, 0, Math.PI * 2);
               ctx.stroke();
               ctx.closePath();
-            } else if (node.shape === 'square' || node.shape === 'rectangle') {
-              ctx.strokeRect(node.x - node.displayWidth/2 - 4, node.y - node.displayHeight/2 - 4, node.displayWidth + 8, node.displayHeight + 8);
+            } else if (node.shape === 'square' || node.shape === 'rectangle' || node.shape === 'floating' || node.shape === 'image') {
+              ctx.strokeRect(node.x - node.displayWidth / 2 - 4, node.y - node.displayHeight / 2 - 4, node.displayWidth + 8, node.displayHeight + 8);
             } else if (node.shape === 'triangle') {
-              const halfW = node.displayWidth/2, halfH = node.displayHeight/2;
+              const halfW = node.displayWidth / 2, halfH = node.displayHeight / 2;
               ctx.beginPath();
               ctx.moveTo(node.x, node.y - halfH - 4);
               ctx.lineTo(node.x - halfW - 4, node.y + halfH + 4);
@@ -513,12 +681,18 @@
             textColor: n.textColor,
             strokeColor: n.strokeColor,
             strokeThickness: n.strokeThickness,
-            manualScale: n.manualScale
+            manualScale: n.manualScale,
+            fontFamily: n.fontFamily,
+            fontSize: n.fontSize,
+            fontWeight: n.fontWeight,
+            fontStyle: n.fontStyle,
+            imageSrc: n.image ? n.image.src : null
           })),
           edges: this.edges.map(e => ({
             from: e.from.id,
             to: e.to.id,
-            lineThickness: e.lineThickness
+            lineThickness: e.lineThickness,
+            lineColor: e.lineColor
           }))
         };
       }
@@ -531,11 +705,19 @@
           n.strokeColor = nState.strokeColor;
           n.strokeThickness = nState.strokeThickness;
           n.manualScale = nState.manualScale;
+          n.fontFamily = nState.fontFamily || "Roboto, Arial, sans-serif";
+          n.fontSize = nState.fontSize || 16;
+          n.fontWeight = nState.fontWeight || "normal";
+          n.fontStyle = nState.fontStyle || "normal";
+          if(nState.imageSrc) {
+            n.image = new Image();
+            n.image.src = nState.imageSrc;
+          }
           nodeMap[n.id] = n;
           return n;
         });
         this.edges = state.edges.map(eState => new Edge(nodeMap[eState.from], nodeMap[eState.to]));
-        this.draw();
+        scheduleDraw();
       }
     }
     
@@ -549,16 +731,10 @@
     let editingNode = null;
     function openEditor(node) {
       editingNode = node;
-      editorArea.innerHTML = node.text;
+      // Use plain text to avoid HTML tags.
+      editorArea.innerText = node.text;
       charCount.textContent = "Characters: " + (editorArea.innerText || "").length;
-      // Set reading mode based on checkbox
-      const readingMode = document.getElementById("readingMode");
-      if(readingMode.checked) {
-        editorArea.contentEditable = "false";
-      } else {
-        editorArea.contentEditable = "true";
-      }
-      // Always enable dragging of the editor modal
+      editorArea.contentEditable = "true";
       makeDraggable(editorModal);
       editorModal.style.display = "block";
     }
@@ -567,10 +743,10 @@
     });
     function closeEditor(save) {
       if (save && editingNode) {
-        // If editor is empty, use a single space.
-        let newText = editorArea.innerHTML.trim() === "" ? " " : editorArea.innerHTML;
+        let newText = editorArea.innerText.trim();
+        if (newText === "" || newText.toLowerCase() === "<br>") newText = "Empty";
         editingNode.text = newText;
-        mindMap.draw();
+        scheduleDraw();
         pushState();
       }
       editorModal.style.display = "none";
@@ -581,11 +757,16 @@
     const configModal = document.getElementById("configModal");
     function openConfig() {
       if (mindMap.selectedNode) {
-        document.getElementById("configFill").value = mindMap.selectedNode.color;
-        document.getElementById("configText").value = mindMap.selectedNode.textColor;
-        document.getElementById("configBorder").value = mindMap.selectedNode.strokeColor;
-        document.getElementById("configStroke").value = mindMap.selectedNode.strokeThickness;
-        document.getElementById("configScale").value = mindMap.selectedNode.manualScale;
+        const node = mindMap.selectedNode;
+        document.getElementById("configFill").value = node.color;
+        document.getElementById("configText").value = node.textColor;
+        document.getElementById("configBorder").value = node.strokeColor;
+        document.getElementById("configStroke").value = node.strokeThickness;
+        document.getElementById("configScale").value = node.manualScale;
+        document.getElementById("configFont").value = node.fontFamily;
+        document.getElementById("configFontSize").value = node.fontSize;
+        document.getElementById("configBold").checked = (node.fontWeight === "bold");
+        document.getElementById("configItalic").checked = (node.fontStyle === "italic");
       }
       document.getElementById("configLine").value = globalLineColor;
       document.getElementById("configLineThick").value = globalLineThickness;
@@ -601,17 +782,36 @@
         node.strokeColor = document.getElementById("configBorder").value;
         node.strokeThickness = parseFloat(document.getElementById("configStroke").value);
         node.manualScale = parseFloat(document.getElementById("configScale").value);
+        node.fontFamily = document.getElementById("configFont").value;
+        node.fontSize = parseInt(document.getElementById("configFontSize").value);
+        node.fontWeight = document.getElementById("configBold").checked ? "bold" : "normal";
+        node.fontStyle = document.getElementById("configItalic").checked ? "italic" : "normal";
+        node._cachedText = null;
       }
-      globalLineColor = document.getElementById("configLine").value;
-      globalLineThickness = parseFloat(document.getElementById("configLineThick").value);
+      if (document.getElementById("edgeGlobal").checked || !mindMap.selectedNode) {
+        globalLineColor = document.getElementById("configLine").value;
+        globalLineThickness = parseFloat(document.getElementById("configLineThick").value);
+        mindMap.edges.forEach(edge => {
+          edge.lineColor = globalLineColor;
+          edge.lineThickness = globalLineThickness;
+        });
+      } else if (mindMap.selectedNode) {
+        const newEdgeColor = document.getElementById("configLine").value;
+        const newEdgeThickness = parseFloat(document.getElementById("configLineThick").value);
+        mindMap.edges.forEach(edge => {
+          if (edge.from === mindMap.selectedNode || edge.to === mindMap.selectedNode) {
+            edge.lineColor = newEdgeColor;
+            edge.lineThickness = newEdgeThickness;
+          }
+        });
+      }
       selectedHighlightColor = document.getElementById("configHighlight").value;
-      mindMap.edges.forEach(edge => edge.lineThickness = globalLineThickness);
       configModal.style.display = "none";
-      mindMap.draw();
+      scheduleDraw();
       pushState();
     }
     
-    /* --- Draggable Modal --- */
+    /* --- Draggable Modal (with touch support) --- */
     function makeDraggable(el) {
       const header = el.querySelector(".modalHeader");
       if (!header) return;
@@ -636,6 +836,28 @@
           document.onmousemove = null;
         }
       };
+      header.addEventListener("touchstart", function(e) {
+        e = e || window.event;
+        e.preventDefault();
+        let pos3 = e.touches[0].clientX, pos4 = e.touches[0].clientY;
+        const touchMove = function(e) {
+          e = e || window.event;
+          e.preventDefault();
+          let clientX = e.touches[0].clientX, clientY = e.touches[0].clientY;
+          let pos1 = pos3 - clientX;
+          let pos2 = pos4 - clientY;
+          pos3 = clientX;
+          pos4 = clientY;
+          el.style.top = (el.offsetTop - pos2) + "px";
+          el.style.left = (el.offsetLeft - pos1) + "px";
+        };
+        const touchEnd = function() {
+          document.removeEventListener("touchmove", touchMove);
+          document.removeEventListener("touchend", touchEnd);
+        };
+        document.addEventListener("touchmove", touchMove, {passive: false});
+        document.addEventListener("touchend", touchEnd);
+      }, {passive: false});
     }
     
     /* --- Undo/Redo and JSON Save/Load --- */
@@ -688,8 +910,8 @@
     
     /* --- Toolbar functions --- */
     function newFile() {
-      if(mindMap.nodes.length > 0) {
-        if(confirm("Save current file before creating a new one?")) {
+      if (mindMap.nodes.length > 0) {
+        if (confirm("Save current file before creating a new one?")) {
           saveJSON();
         }
       }
@@ -697,99 +919,131 @@
       pushState();
     }
     function addCircle() {
-      const x = (canvas.width/2)/zoomLevel;
-      const y = (canvas.height/2)/zoomLevel;
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
       const fill = document.getElementById("configFill").value || "#FFD700";
       const node = new Node(x, y, "New Circle", "circle", fill);
-      node.textColor = document.getElementById("configText").value || "#ffffff";
+      node.textColor = document.getElementById("configText").value || "#000000";
       node.strokeColor = document.getElementById("configBorder").value || "#333333";
       node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
       node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
       mindMap.addNode(node);
+      resetConfigDefaults();
     }
     function addSquare() {
-      const x = (canvas.width/2)/zoomLevel;
-      const y = (canvas.height/2)/zoomLevel;
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
       const fill = document.getElementById("configFill").value || "#FFD700";
       const node = new Node(x, y, "New Square", "square", fill);
-      node.textColor = document.getElementById("configText").value || "#ffffff";
+      node.textColor = document.getElementById("configText").value || "#000000";
       node.strokeColor = document.getElementById("configBorder").value || "#333333";
       node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
       node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
       mindMap.addNode(node);
+      resetConfigDefaults();
     }
     function addTriangle() {
-      const x = (canvas.width/2)/zoomLevel;
-      const y = (canvas.height/2)/zoomLevel;
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
       const fill = document.getElementById("configFill").value || "#FFD700";
       const node = new Node(x, y, "New Triangle", "triangle", fill);
-      node.textColor = document.getElementById("configText").value || "#ffffff";
+      node.textColor = document.getElementById("configText").value || "#000000";
       node.strokeColor = document.getElementById("configBorder").value || "#333333";
       node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
       node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
       mindMap.addNode(node);
+      resetConfigDefaults();
     }
     function addRectangle() {
-      // Create a golden rectangle (width:height ≈ 1.618:1) using config settings.
-      const x = (canvas.width/2)/zoomLevel;
-      const y = (canvas.height/2)/zoomLevel;
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
       const fill = document.getElementById("configFill").value || "#FFD700";
       const node = new Node(x, y, "New Rectangle", "rectangle", fill);
-      node.textColor = document.getElementById("configText").value || "#ffffff";
+      node.textColor = document.getElementById("configText").value || "#000000";
       node.strokeColor = document.getElementById("configBorder").value || "#333333";
       node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
       node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
-      // The adjustSize() method for "rectangle" will force a golden ratio.
       mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    // New function: Add Floating Text
+    function addFloatingText() {
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
+      const node = new Node(x, y, "New Floating Text", "floating", "transparent");
+      node.textColor = document.getElementById("configText").value || "#000000";
+      node.strokeColor = "transparent";
+      node.strokeThickness = 0;
+      node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
+      mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    // New function: Add Image Node
+    function addImage() {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/jpeg, image/png, image/gif";
+      input.onchange = e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          const img = new Image();
+          img.onload = function() {
+            const x = (canvas.width / 2) / zoomLevel;
+            const y = (canvas.height / 2) / zoomLevel;
+            const node = new Node(x, y, "", "image", "transparent");
+            node.image = img;
+            // Reset image node defaults:
+            node.manualScale = 1;
+            node.strokeColor = "transparent";
+            node.strokeThickness = 0;
+            mindMap.addNode(node);
+            resetConfigDefaults();
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    }
+    function resetConfigDefaults() {
+      // Reset configuration input values to their defaults.
+      document.getElementById("configFill").value = "#FFD700";
+      document.getElementById("configText").value = "#000000";
+      document.getElementById("configBorder").value = "#333333";
+      document.getElementById("configStroke").value = "2";
+      document.getElementById("configScale").value = "1";
+      document.getElementById("configFont").value = "Roboto, Arial, sans-serif";
+      document.getElementById("configFontSize").value = "16";
+      document.getElementById("configBold").checked = false;
+      document.getElementById("configItalic").checked = false;
     }
     function setMode(newMode) {
       currentMode = newMode;
       connectionSourceNode = null;
       updateStatus();
     }
-    function applyNodeColor() {
-      if (mindMap.selectedNode) {
-        mindMap.selectedNode.color = document.getElementById("configFill").value;
-        mindMap.draw();
-        pushState();
-      } else alert("No node selected to change fill color.");
-    }
-    function applyTextColor() {
-      if (mindMap.selectedNode) {
-        mindMap.selectedNode.textColor = document.getElementById("configText").value;
-        mindMap.draw();
-        pushState();
-      } else alert("No node selected to change text color.");
-    }
-    function applyStrokeColor() {
-      if (mindMap.selectedNode) {
-        mindMap.selectedNode.strokeColor = document.getElementById("configBorder").value;
-        mindMap.draw();
-        pushState();
-      } else alert("No node selected to change border color.");
-    }
-    function applyLineColor() {
-      globalLineColor = document.getElementById("configLine").value;
-      mindMap.draw();
-    }
     function zoomIn() {
       zoomLevel *= 1.1;
-      mindMap.draw();
+      scheduleDraw();
       updateStatus();
     }
     function zoomOut() {
       zoomLevel /= 1.1;
-      mindMap.draw();
+      scheduleDraw();
       updateStatus();
     }
     function deleteNode() {
-      if(editorModal.style.display !== "block"){
+      if (editorModal.style.display !== "block") {
         if (mindMap.selectedNode) {
           mindMap.deleteNode(mindMap.selectedNode);
-        } else alert("No node selected to delete.");
+        } else {
+          alert("No node selected to delete.");
+        }
       }
     }
-    function saveAsImage(type) {
+    function saveAsImage() {
       const dataURL = canvas.toDataURL("image/png");
       const link = document.createElement("a");
       link.href = dataURL;
@@ -806,24 +1060,32 @@
     
     /* --- Keyboard shortcuts --- */
     window.addEventListener("keydown", (event) => {
-      // If focus is in the editor modal, do not intercept text editing keys.
-      if(editorModal.style.display === "block" && editorArea.contains(event.target)) return;
-      if(event.ctrlKey && event.key.toLowerCase() === "z" && !event.shiftKey){
+      if (editorModal.style.display === "block" && editorArea.contains(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
         event.preventDefault();
         undo();
-      } else if(event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "z"){
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "z") {
         event.preventDefault();
         redo();
-      } else if((event.key === "Delete") && document.activeElement !== editorArea){
+      } else if ((event.key === "Delete") && document.activeElement !== editorArea) {
         deleteNode();
-      } else if(mindMap.selectedNode && currentMode === Mode.SELECT) {
-        if(event.key === "=") {
-          mindMap.selectedNode.manualScale += 0.1;
-          mindMap.draw();
+      } else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
+        // Use event.key as well as keyCode fallback (187 for "=" and 189 for "-")
+        if (event.key === "=" || event.key === "+" || event.keyCode === 187) {
+          if (mindMap.selectedNode.shape === "image") {
+            mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale + 0.1);
+          } else {
+            mindMap.selectedNode.manualScale += 0.1;
+          }
+          scheduleDraw();
           pushState();
-        } else if(event.key === "-") {
-          mindMap.selectedNode.manualScale = Math.max(1, mindMap.selectedNode.manualScale - 0.1);
-          mindMap.draw();
+        } else if (event.key === "-" || event.key === "–" || event.keyCode === 189) {
+          if (mindMap.selectedNode.shape === "image") {
+            mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale - 0.1);
+          } else {
+            mindMap.selectedNode.manualScale = Math.max(1, mindMap.selectedNode.manualScale - 0.1);
+          }
+          scheduleDraw();
           pushState();
         }
       }
@@ -832,7 +1094,7 @@
     window.addEventListener("resize", () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      mindMap.draw();
+      scheduleDraw();
     });
     
     // Initialize state.
@@ -840,12 +1102,8 @@
     
     /* --- Reading Mode Toggle --- */
     document.getElementById("readingMode").addEventListener("change", function() {
-      if(this.checked) {
-        editorArea.contentEditable = "false";
-        makeDraggable(editorModal);
-      } else {
-        editorArea.contentEditable = "true";
-      }
+      editorArea.style.pointerEvents = this.checked ? "none" : "auto";
+      makeDraggable(editorModal);
     });
   </script>
 </body>
