@@ -52,6 +52,11 @@
       width: 28px;
       height: 28px;
     }
+    /* New image scaling buttons added to toolbar */
+    #toolbar .imgScaleBtn {
+      background: #FFD700;
+      font-weight: bold;
+    }
     #toolbar span {
       color: #fff;
       margin-left: 4px;
@@ -134,6 +139,9 @@
     <button onclick="addRectangle()" title="Add Rectangle">▭</button>
     <button onclick="addFloatingText()" title="Add Floating Text">Floating</button>
     <button onclick="addImage()" title="Add Image">Image</button>
+    <!-- New image scaling buttons (for mobile and keyboard alternative) -->
+    <button class="imgScaleBtn" onclick="scaleImage(0.1)" title="Increase Image Size">Img +</button>
+    <button class="imgScaleBtn" onclick="scaleImage(-0.1)" title="Decrease Image Size">Img –</button>
     <button onclick="setMode(Mode.CONNECT)" title="Connect">↔</button>
     <button onclick="setMode(Mode.DISCONNECT)" title="Disconnect">←×→</button>
     <button onclick="setMode(Mode.SELECT)" title="Select/Move">☚</button>
@@ -509,6 +517,7 @@
       }
       setupEvents() {
         const getWorldCoords = (event) => this.getWorldCoords(event);
+        let longPressTimer = null;
         this.canvas.addEventListener("mousedown", (event) => {
           if (editorModal.style.display === "block") return;
           const { x, y } = getWorldCoords(event);
@@ -517,7 +526,6 @@
             const node = this.nodes[i];
             if (node.contains(x, y)) {
               this.selectedNode = node;
-              // Do not clear cache so that the beginning of the text is preserved.
               found = true;
               if (currentMode === Mode.SELECT) this.dragging = true;
               if (currentMode === Mode.CONNECT || currentMode === Mode.DISCONNECT) {
@@ -568,6 +576,17 @@
         this.canvas.addEventListener("touchstart", (event) => {
           event.preventDefault();
           const { x, y } = getWorldCoords(event);
+          // Long-press detection for mobile editing:
+          longPressTimer = setTimeout(() => {
+            for (let i = this.nodes.length - 1; i >= 0; i--) {
+              const node = this.nodes[i];
+              if (node.contains(x, y)) {
+                openEditor(node);
+                break;
+              }
+            }
+            longPressTimer = null;
+          }, 600);
           let found = false;
           for (let i = this.nodes.length - 1; i >= 0; i--) {
             const node = this.nodes[i];
@@ -600,6 +619,10 @@
         }, {passive: false});
         this.canvas.addEventListener("touchmove", (event) => {
           event.preventDefault();
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
           if (this.dragging && this.selectedNode && currentMode === Mode.SELECT) {
             const { x, y } = getWorldCoords(event);
             this.selectedNode.x = x;
@@ -608,6 +631,10 @@
           }
         }, {passive: false});
         this.canvas.addEventListener("touchend", (event) => {
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
           if (this.dragging) pushState();
           this.dragging = false;
         });
@@ -654,9 +681,9 @@
               ctx.stroke();
               ctx.closePath();
             } else if (node.shape === 'square' || node.shape === 'rectangle' || node.shape === 'floating' || node.shape === 'image') {
-              ctx.strokeRect(node.x - node.displayWidth / 2 - 4, node.y - node.displayHeight / 2 - 4, node.displayWidth + 8, node.displayHeight + 8);
+              ctx.strokeRect(node.x - node.displayWidth/2 - 4, node.y - node.displayHeight/2 - 4, node.displayWidth + 8, node.displayHeight + 8);
             } else if (node.shape === 'triangle') {
-              const halfW = node.displayWidth / 2, halfH = node.displayHeight / 2;
+              const halfW = node.displayWidth/2, halfH = node.displayHeight/2;
               ctx.beginPath();
               ctx.moveTo(node.x, node.y - halfH - 4);
               ctx.lineTo(node.x - halfW - 4, node.y + halfH + 4);
@@ -1070,7 +1097,7 @@
       } else if ((event.key === "Delete") && document.activeElement !== editorArea) {
         deleteNode();
       } else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
-        // Use event.key as well as keyCode fallback (187 for "=" and 189 for "-")
+        // Use event.key and keyCode fallback for scaling.
         if (event.key === "=" || event.key === "+" || event.keyCode === 187) {
           if (mindMap.selectedNode.shape === "image") {
             mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale + 0.1);
@@ -1105,6 +1132,15 @@
       editorArea.style.pointerEvents = this.checked ? "none" : "auto";
       makeDraggable(editorModal);
     });
+    
+    /* --- Additional function for on-screen image scaling (for mobile) --- */
+    function scaleImage(delta) {
+      if (mindMap.selectedNode && mindMap.selectedNode.shape === "image") {
+        mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale + delta);
+        scheduleDraw();
+        pushState();
+      }
+    }
   </script>
 </body>
 </html>
