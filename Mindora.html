@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mindora - Mind Map</title>
+  <!-- Google Font for a modern, professional look -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* Global reset and body styling */
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Roboto', sans-serif;
+      background: #f4f4f4;
+    }
+    /* Full-screen canvas */
+    canvas {
+      display: block;
+      background: white;
+    }
+    /* Compact, elegant toolbar using golden ratio spacing */
+    #toolbar {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(51,51,51,0.9);
+      padding: 8px 12px;
+      border-radius: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      z-index: 10;
+      font-size: 12px;
+    }
+    #toolbar button,
+    #toolbar input[type="color"] {
+      background: #FFD700;
+      color: #333;
+      border: none;
+      padding: 4px 8px;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background 0.3s;
+    }
+    #toolbar button:hover {
+      background: #e6c200;
+    }
+    #toolbar input[type="color"] {
+      width: 28px;
+      height: 28px;
+    }
+    #toolbar span {
+      color: #fff;
+      margin-left: 4px;
+    }
+    /* Modal styles – both editor and config share common styling */
+    #editorModal, #configModal {
+      display: none;
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      background: #fff;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      border-radius: 8px;
+      padding: 16px;
+      z-index: 20;
+      width: 320px;
+    }
+    /* The modal header acts as a drag handle */
+    .modalHeader {
+      font-size: 16px;
+      margin: 0;
+      cursor: move;
+      user-select: none;
+    }
+    /* Editor modal: keep left–aligned for professional editing */
+    #editorArea {
+      width: 100%;
+      height: 150px;
+      border: 1px solid #ccc;
+      padding: 8px;
+      overflow: auto;
+      white-space: pre-wrap;
+      writing-mode: horizontal-tb;
+    }
+    #charCount {
+      font-size: 10px;
+      text-align: right;
+      margin-top: 4px;
+      color: #666;
+    }
+    #editorModal button, #configModal button {
+      margin-top: 8px;
+      padding: 4px 8px;
+    }
+    /* Config modal inputs */
+    #configModal label {
+      display: block;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+    #configModal input[type="color"],
+    #configModal input[type="number"] {
+      margin-top: 2px;
+      width: 100%;
+      padding: 2px;
+    }
+    #configModal select {
+      margin-top: 2px;
+      width: 100%;
+      padding: 2px;
+    }
+    #configModal .edgeGlobalContainer {
+      margin-top: 6px;
+      font-size: 12px;
+    }
+    #configModal .selectedHighlightLabel {
+      margin-top: 6px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <button onclick="newFile()" title="New File">New</button>
+    <button onclick="addCircle()" title="Add Circle">○</button>
+    <button onclick="addSquare()" title="Add Square">□</button>
+    <button onclick="addTriangle()" title="Add Triangle">△</button>
+    <button onclick="addRectangle()" title="Add Rectangle">▭</button>
+    <button onclick="addFloatingText()" title="Add Floating Text">Floating</button>
+    <button onclick="addImage()" title="Add Image">Image</button>
+    <button onclick="setMode(Mode.CONNECT)" title="Connect">↔</button>
+    <button onclick="setMode(Mode.DISCONNECT)" title="Disconnect">←×→</button>
+    <button onclick="setMode(Mode.SELECT)" title="Select/Move">☚</button>
+    <button onclick="deleteNode()" title="Delete Node">✖</button>
+    <button onclick="zoomIn()" title="Zoom In">＋</button>
+    <button onclick="zoomOut()" title="Zoom Out">－</button>
+    <button onclick="openConfig()" title="Configure Selected Node/Edges">Config</button>
+    <button onclick="saveAsImage()" title="Save as PNG">Save PNG</button>
+    <button onclick="saveJSON()" title="Save JSON">Save JSON</button>
+    <button onclick="loadJSON()" title="Load JSON">Load JSON</button>
+    <button onclick="undo()" title="Undo (Ctrl+Z)">Undo</button>
+    <button onclick="redo()" title="Redo (Ctrl+Shift+Z)">Redo</button>
+    <span id="status">Mode: Select/Move | Zoom: 100%</span>
+  </div>
+  
+  <!-- Editor Modal -->
+  <div id="editorModal">
+    <div class="modalHeader">Edit Node Text</div>
+    <div id="editorArea" contenteditable="true" style="border:1px solid #ccc;"></div>
+    <div id="charCount">Characters: 0</div>
+    <label style="font-size:12px; margin-top:4px;">
+      <input type="checkbox" id="readingMode" /> Reading Mode
+    </label>
+    <div style="text-align:right; margin-top:8px;">
+      <button onclick="closeEditor(true)">OK</button>
+      <button onclick="closeEditor(false)">Cancel</button>
+    </div>
+  </div>
+  
+  <!-- Config Modal -->
+  <div id="configModal">
+    <div class="modalHeader">Configure</div>
+    <div id="nodeConfig">
+      <label>Fill Color:
+        <input type="color" id="configFill" value="#FFD700" />
+      </label>
+      <label>Text Color:
+        <input type="color" id="configText" value="#000000" />
+      </label>
+      <label>Border Color:
+        <input type="color" id="configBorder" value="#333333" />
+      </label>
+      <label>Stroke Thickness:
+        <input type="number" id="configStroke" value="2" min="1" step="0.5" />
+      </label>
+      <label>Manual Scale (for node size):
+        <input type="number" id="configScale" value="1" min="1" step="0.1" />
+      </label>
+      <label>Font Family:
+        <select id="configFont">
+          <option value="Roboto, Arial, sans-serif">Roboto</option>
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="Times New Roman, serif">Times New Roman</option>
+          <option value="Courier New, monospace">Courier New</option>
+        </select>
+      </label>
+      <label>Font Size:
+        <input type="number" id="configFontSize" value="16" min="8" max="72" step="1" />
+      </label>
+      <label>
+        <input type="checkbox" id="configBold" /> Bold
+      </label>
+      <label>
+        <input type="checkbox" id="configItalic" /> Italic
+      </label>
+      <label class="selectedHighlightLabel">Selected Node Highlight Color:
+        <input type="color" id="configHighlight" value="#add8e6" />
+      </label>
+    </div>
+    <hr />
+    <div id="edgeConfig">
+      <label>Line Color:
+        <input type="color" id="configLine" value="#777777" />
+      </label>
+      <label>Line Thickness:
+        <input type="number" id="configLineThick" value="3" min="1" step="0.5" />
+      </label>
+      <div class="edgeGlobalContainer">
+        <label>
+          <input type="checkbox" id="edgeGlobal" /> Apply to all edges
+        </label>
+      </div>
+    </div>
+    <div style="text-align:right; margin-top:8px;">
+      <button onclick="closeConfig(true)">Apply</button>
+      <button onclick="closeConfig(false)">Cancel</button>
+    </div>
+  </div>
+  
+  <!-- Canvas -->
+  <canvas id="mindmapCanvas"></canvas>
+  
+  <script>
+    /* Global constants and variables */
+    const GOLDEN_RATIO = 1.618;
+    let zoomLevel = 1;
+    let globalLineColor = document.getElementById("configLine").value;
+    let globalLineThickness = parseFloat(document.getElementById("configLineThick").value);
+    let selectedHighlightColor = document.getElementById("configHighlight").value;
+    let nextNodeId = 1;
+    let undoStack = [];
+    let redoStack = [];
+    let connectionSourceNode = null;
+    
+    // Global text measurement cache.
+    const measureCache = new Map();
+    function measureText(ctx, text) {
+      const key = ctx.font + "|" + text;
+      if (measureCache.has(key)) return measureCache.get(key);
+      const m = ctx.measureText(text).width;
+      measureCache.set(key, m);
+      return m;
+    }
+    
+    // Get canvas and context.
+    const canvas = document.getElementById("mindmapCanvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    // Throttle redraw.
+    let redrawScheduled = false;
+    function scheduleDraw() {
+      if (!redrawScheduled) {
+        redrawScheduled = true;
+        requestAnimationFrame(() => {
+          mindMap.draw();
+          redrawScheduled = false;
+        });
+      }
+    }
+    
+    // Mode enumeration.
+    const Mode = { SELECT: 'select', CONNECT: 'connect', DISCONNECT: 'disconnect' };
+    let currentMode = Mode.SELECT;
+    
+    /* Node class */
+    class Node {
+      constructor(x, y, text = "New Node", shape = 'circle', color = "#FFD700") {
+        this.id = nextNodeId++;
+        this.x = x;
+        this.y = y;
+        this.text = text || " ";
+        this.shape = shape;
+        this.color = color;
+        this.textColor = "#000000";  // Standard default text color.
+        this.strokeColor = "#333333";
+        this.strokeThickness = 2;
+        this.manualScale = 1;
+        // Font settings.
+        this.fontFamily = "Roboto, Arial, sans-serif";
+        this.fontSize = 16;
+        this.fontWeight = "normal";
+        this.fontStyle = "normal";
+        // For image nodes.
+        this.image = null;
+        // Cached computed values.
+        this._cachedText = null;
+        this._cachedManualScale = null;
+        this._cachedDisplayLines = null;
+        this._cachedAvailableWidth = null;
+      }
+      getDisplayLines(ctx, availableWidth) {
+        if (this.shape === "image") return [];
+        let safeText = this.text.trim();
+        if (safeText.toLowerCase() === "<br>" || safeText === "") safeText = "Empty";
+        if (safeText.length > 5000) safeText = safeText.substring(0, 5000) + "...";
+        const lines = safeText.split("\n").slice(0, 20);
+        if (this._cachedDisplayLines && this._cachedAvailableWidth === availableWidth) return this._cachedDisplayLines;
+        let displayLines = [];
+        for (let line of lines) {
+          if (measureText(ctx, line) > availableWidth) {
+            while (measureText(ctx, line + "...") > availableWidth && line.length > 0) {
+              line = line.slice(0, -1);
+            }
+            line += "...";
+          }
+          displayLines.push(line);
+        }
+        this._cachedDisplayLines = displayLines;
+        this._cachedAvailableWidth = availableWidth;
+        return displayLines;
+      }
+      adjustSize(ctx) {
+        // For image nodes, use image dimensions.
+        if (this.shape === "image" && this.image) {
+          const maxDimension = 200;
+          let iw = this.image.naturalWidth;
+          let ih = this.image.naturalHeight;
+          let scale = Math.min(1, maxDimension / iw, maxDimension / ih);
+          this.displayWidth = iw * scale;
+          this.displayHeight = ih * scale;
+          return;
+        }
+        let safeText = this.text.trim();
+        if (safeText.toLowerCase() === "<br>") safeText = "";
+        if (safeText.length > 5000) safeText = safeText.substring(0, 5000) + "...";
+        const lines = safeText.split("\n").slice(0, 20);
+        if (this._cachedText === safeText && this._cachedManualScale === this.manualScale) return;
+        this._cachedText = safeText;
+        this._cachedManualScale = this.manualScale;
+        ctx.font = `${this.fontStyle} ${this.fontWeight} ${this.fontSize}px ${this.fontFamily}`;
+        let maxLineWidth = 0;
+        for (let line of lines) {
+          maxLineWidth = Math.max(maxLineWidth, measureText(ctx, line));
+        }
+        const padding = 20;
+        const maxAutoCircle = 100, maxAutoSquare = 200, maxAutoRectWidth = 200, maxAutoTriangle = 200;
+        if (this.shape === 'circle') {
+          let autoRadius = (maxLineWidth + padding) / 2;
+          autoRadius = Math.max(40, autoRadius);
+          if (autoRadius > maxAutoCircle) autoRadius = maxAutoCircle;
+          this.displayRadius = autoRadius * this.manualScale;
+        } else if (this.shape === 'square') {
+          let autoSize = maxLineWidth + padding;
+          autoSize = Math.max(autoSize, 40 * GOLDEN_RATIO);
+          if (autoSize > maxAutoSquare) autoSize = maxAutoSquare;
+          this.displayWidth = autoSize * this.manualScale;
+          this.displayHeight = autoSize * this.manualScale;
+        } else if (this.shape === 'rectangle') {
+          let autoWidth = maxLineWidth + padding;
+          autoWidth = Math.max(autoWidth, 40 * GOLDEN_RATIO);
+          if (autoWidth > maxAutoRectWidth) autoWidth = maxAutoRectWidth;
+          this.displayWidth = autoWidth * this.manualScale;
+          this.displayHeight = (autoWidth / GOLDEN_RATIO) * this.manualScale;
+        } else if (this.shape === 'triangle') {
+          let autoWidth = maxLineWidth + padding;
+          autoWidth = Math.max(autoWidth, 40 * GOLDEN_RATIO);
+          if (autoWidth > maxAutoTriangle) autoWidth = maxAutoTriangle;
+          this.displayWidth = autoWidth * this.manualScale;
+          this.displayHeight = Math.round(autoWidth * Math.sqrt(3) / 2) * this.manualScale;
+        } else if (this.shape === 'floating') {
+          let textWidth = 0;
+          for (let line of lines) {
+            textWidth = Math.max(textWidth, measureText(ctx, line));
+          }
+          this.displayWidth = textWidth + 20;
+          this.displayHeight = lines.length * (this.fontSize + 4) + 10;
+        }
+      }
+      draw(ctx) {
+        this.adjustSize(ctx);
+        ctx.font = `${this.fontStyle} ${this.fontWeight} ${this.fontSize}px ${this.fontFamily}`;
+        ctx.textBaseline = "middle";
+        if (this.shape === "image" && this.image) {
+          ctx.drawImage(this.image, this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+        } else if (this.shape !== "floating") {
+          ctx.beginPath();
+          if (this.shape === 'circle') {
+            ctx.arc(this.x, this.y, this.displayRadius, 0, Math.PI * 2);
+          } else if (this.shape === 'square' || this.shape === 'rectangle') {
+            ctx.rect(this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+          } else if (this.shape === 'triangle') {
+            const halfW = this.displayWidth / 2, halfH = this.displayHeight / 2;
+            ctx.moveTo(this.x, this.y - halfH);
+            ctx.lineTo(this.x - halfW, this.y + halfH);
+            ctx.lineTo(this.x + halfW, this.y + halfH);
+            ctx.closePath();
+          }
+          ctx.fillStyle = this.color;
+          ctx.fill();
+          ctx.lineWidth = this.strokeThickness;
+          ctx.strokeStyle = this.strokeColor;
+          ctx.stroke();
+        }
+        if (this.shape !== "image") {
+          let availableWidth;
+          if (this.shape === 'circle') {
+            availableWidth = this.displayRadius * 2 - 10;
+          } else if (this.shape === 'triangle') {
+            availableWidth = this.displayWidth * 0.7 - 10;
+          } else {
+            availableWidth = this.displayWidth - 10;
+          }
+          let displayLines = this.getDisplayLines(ctx, availableWidth);
+          ctx.fillStyle = this.textColor;
+          ctx.textAlign = "center";
+          const lineHeight = this.fontSize + 4;
+          let totalTextHeight = displayLines.length * lineHeight;
+          let startY;
+          if (this.shape === 'triangle') {
+            const halfH = this.displayHeight / 2;
+            let centroidY = this.y - halfH + (this.displayHeight * 2 / 3);
+            startY = centroidY - totalTextHeight / 2 + lineHeight / 2;
+          } else {
+            startY = this.y - totalTextHeight / 2 + lineHeight / 2;
+          }
+          if (this.shape === 'circle' || this.shape === 'square' || this.shape === 'rectangle' || this.shape === 'triangle') {
+            ctx.save();
+            if (this.shape === 'circle') {
+              ctx.beginPath();
+              ctx.arc(this.x, this.y, this.displayRadius - 5, 0, Math.PI * 2);
+              ctx.clip();
+            } else if (this.shape === 'square' || this.shape === 'rectangle') {
+              ctx.beginPath();
+              ctx.rect(this.x - this.displayWidth / 2, this.y - this.displayHeight / 2, this.displayWidth, this.displayHeight);
+              ctx.clip();
+            } else if (this.shape === 'triangle') {
+              ctx.beginPath();
+              const halfW = this.displayWidth / 2, halfH = this.displayHeight / 2;
+              ctx.moveTo(this.x, this.y - halfH + 3);
+              ctx.lineTo(this.x - halfW + 3, this.y + halfH - 3);
+              ctx.lineTo(this.x + halfW - 3, this.y + halfH - 3);
+              ctx.closePath();
+              ctx.clip();
+            }
+            for (let i = 0; i < displayLines.length; i++) {
+              ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
+            }
+            ctx.restore();
+          } else if (this.shape === 'floating') {
+            for (let i = 0; i < displayLines.length; i++) {
+              ctx.fillText(displayLines[i], this.x, startY + i * lineHeight);
+            }
+          }
+        }
+      }
+      contains(x, y) {
+        if (this.shape === 'circle') {
+          return Math.hypot(x - this.x, y - this.y) <= this.displayRadius;
+        } else {
+          return (
+            x >= this.x - this.displayWidth / 2 &&
+            x <= this.x + this.displayWidth / 2 &&
+            y >= this.y - this.displayHeight / 2 &&
+            y <= this.y + this.displayHeight / 2
+          );
+        }
+      }
+    }
+    
+    /* Edge class */
+    class Edge {
+      constructor(from, to) {
+        this.from = from;
+        this.to = to;
+        this.lineThickness = globalLineThickness;
+        this.lineColor = globalLineColor;
+      }
+      draw(ctx) {
+        ctx.beginPath();
+        ctx.moveTo(this.from.x, this.from.y);
+        ctx.lineTo(this.to.x, this.to.y);
+        ctx.strokeStyle = this.lineColor;
+        ctx.lineWidth = this.lineThickness;
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
+    
+    /* MindMap class */
+    class MindMap {
+      constructor(canvas, ctx) {
+        this.canvas = canvas;
+        this.ctx = ctx;
+        this.nodes = [];
+        this.edges = [];
+        this.selectedNode = null;
+        this.dragging = false;
+        this.setupEvents();
+      }
+      getWorldCoords(event) {
+        const rect = canvas.getBoundingClientRect();
+        let clientX = event.clientX, clientY = event.clientY;
+        if (event.touches && event.touches.length > 0) {
+          clientX = event.touches[0].clientX;
+          clientY = event.touches[0].clientY;
+        }
+        return {
+          x: (clientX - rect.left) / zoomLevel,
+          y: (clientY - rect.top) / zoomLevel
+        };
+      }
+      setupEvents() {
+        const getWorldCoords = (event) => this.getWorldCoords(event);
+        this.canvas.addEventListener("mousedown", (event) => {
+          if (editorModal.style.display === "block") return;
+          const { x, y } = getWorldCoords(event);
+          let found = false;
+          for (let i = this.nodes.length - 1; i >= 0; i--) {
+            const node = this.nodes[i];
+            if (node.contains(x, y)) {
+              this.selectedNode = node;
+              // Do not clear cache so that the beginning of the text is preserved.
+              found = true;
+              if (currentMode === Mode.SELECT) this.dragging = true;
+              if (currentMode === Mode.CONNECT || currentMode === Mode.DISCONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = node;
+                } else if (connectionSourceNode !== node) {
+                  if (currentMode === Mode.CONNECT) {
+                    if (!this.edgeExists(connectionSourceNode, node)) {
+                      this.edges.push(new Edge(connectionSourceNode, node));
+                      pushState();
+                    }
+                  } else if (currentMode === Mode.DISCONNECT) {
+                    this.removeEdge(connectionSourceNode, node);
+                    pushState();
+                  }
+                  connectionSourceNode = null;
+                }
+              }
+              break;
+            }
+          }
+          if (!found) this.selectedNode = null;
+          scheduleDraw();
+          updateStatus();
+        });
+        this.canvas.addEventListener("mousemove", (event) => {
+          if (this.dragging && this.selectedNode && currentMode === Mode.SELECT) {
+            const { x, y } = getWorldCoords(event);
+            this.selectedNode.x = x;
+            this.selectedNode.y = y;
+            scheduleDraw();
+          }
+        });
+        this.canvas.addEventListener("mouseup", () => { 
+          if (this.dragging) pushState();
+          this.dragging = false;
+        });
+        this.canvas.addEventListener("dblclick", (event) => {
+          if (editorModal.style.display === "block") return;
+          const { x, y } = getWorldCoords(event);
+          for (let node of this.nodes) {
+            if (node.contains(x, y)) {
+              openEditor(node);
+              break;
+            }
+          }
+        });
+        this.canvas.addEventListener("touchstart", (event) => {
+          event.preventDefault();
+          const { x, y } = getWorldCoords(event);
+          let found = false;
+          for (let i = this.nodes.length - 1; i >= 0; i--) {
+            const node = this.nodes[i];
+            if (node.contains(x, y)) {
+              this.selectedNode = node;
+              found = true;
+              if (currentMode === Mode.SELECT) this.dragging = true;
+              if (currentMode === Mode.CONNECT || currentMode === Mode.DISCONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = node;
+                } else if (connectionSourceNode !== node) {
+                  if (currentMode === Mode.CONNECT) {
+                    if (!this.edgeExists(connectionSourceNode, node)) {
+                      this.edges.push(new Edge(connectionSourceNode, node));
+                      pushState();
+                    }
+                  } else if (currentMode === Mode.DISCONNECT) {
+                    this.removeEdge(connectionSourceNode, node);
+                    pushState();
+                  }
+                  connectionSourceNode = null;
+                }
+              }
+              break;
+            }
+          }
+          if (!found) this.selectedNode = null;
+          scheduleDraw();
+          updateStatus();
+        }, {passive: false});
+        this.canvas.addEventListener("touchmove", (event) => {
+          event.preventDefault();
+          if (this.dragging && this.selectedNode && currentMode === Mode.SELECT) {
+            const { x, y } = getWorldCoords(event);
+            this.selectedNode.x = x;
+            this.selectedNode.y = y;
+            scheduleDraw();
+          }
+        }, {passive: false});
+        this.canvas.addEventListener("touchend", (event) => {
+          if (this.dragging) pushState();
+          this.dragging = false;
+        });
+      }
+      edgeExists(nodeA, nodeB) {
+        return this.edges.some(edge =>
+          (edge.from === nodeA && edge.to === nodeB) ||
+          (edge.from === nodeB && edge.to === nodeA)
+        );
+      }
+      removeEdge(nodeA, nodeB) {
+        this.edges = this.edges.filter(edge =>
+          !((edge.from === nodeA && edge.to === nodeB) ||
+            (edge.from === nodeB && edge.to === nodeA))
+        );
+        scheduleDraw();
+      }
+      addNode(node) {
+        this.nodes.push(node);
+        scheduleDraw();
+        pushState();
+      }
+      deleteNode(node) {
+        this.nodes = this.nodes.filter(n => n !== node);
+        this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
+        if (this.selectedNode === node) this.selectedNode = null;
+        scheduleDraw();
+        pushState();
+      }
+      draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.scale(zoomLevel, zoomLevel);
+        this.edges.forEach(edge => edge.draw(ctx));
+        this.nodes.forEach(node => {
+          node.draw(ctx);
+          if (node === this.selectedNode) {
+            ctx.save();
+            ctx.strokeStyle = selectedHighlightColor;
+            ctx.lineWidth = 4;
+            if (node.shape === 'circle') {
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, node.displayRadius + 4, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.closePath();
+            } else if (node.shape === 'square' || node.shape === 'rectangle' || node.shape === 'floating' || node.shape === 'image') {
+              ctx.strokeRect(node.x - node.displayWidth / 2 - 4, node.y - node.displayHeight / 2 - 4, node.displayWidth + 8, node.displayHeight + 8);
+            } else if (node.shape === 'triangle') {
+              const halfW = node.displayWidth / 2, halfH = node.displayHeight / 2;
+              ctx.beginPath();
+              ctx.moveTo(node.x, node.y - halfH - 4);
+              ctx.lineTo(node.x - halfW - 4, node.y + halfH + 4);
+              ctx.lineTo(node.x + halfW + 4, node.y + halfH + 4);
+              ctx.closePath();
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+        });
+        ctx.restore();
+      }
+      getState() {
+        return {
+          nodes: this.nodes.map(n => ({
+            id: n.id,
+            x: n.x,
+            y: n.y,
+            text: n.text,
+            shape: n.shape,
+            color: n.color,
+            textColor: n.textColor,
+            strokeColor: n.strokeColor,
+            strokeThickness: n.strokeThickness,
+            manualScale: n.manualScale,
+            fontFamily: n.fontFamily,
+            fontSize: n.fontSize,
+            fontWeight: n.fontWeight,
+            fontStyle: n.fontStyle,
+            imageSrc: n.image ? n.image.src : null
+          })),
+          edges: this.edges.map(e => ({
+            from: e.from.id,
+            to: e.to.id,
+            lineThickness: e.lineThickness,
+            lineColor: e.lineColor
+          }))
+        };
+      }
+      setState(state) {
+        const nodeMap = {};
+        this.nodes = state.nodes.map(nState => {
+          const n = new Node(nState.x, nState.y, nState.text, nState.shape, nState.color);
+          n.id = nState.id;
+          n.textColor = nState.textColor;
+          n.strokeColor = nState.strokeColor;
+          n.strokeThickness = nState.strokeThickness;
+          n.manualScale = nState.manualScale;
+          n.fontFamily = nState.fontFamily || "Roboto, Arial, sans-serif";
+          n.fontSize = nState.fontSize || 16;
+          n.fontWeight = nState.fontWeight || "normal";
+          n.fontStyle = nState.fontStyle || "normal";
+          if(nState.imageSrc) {
+            n.image = new Image();
+            n.image.src = nState.imageSrc;
+          }
+          nodeMap[n.id] = n;
+          return n;
+        });
+        this.edges = state.edges.map(eState => new Edge(nodeMap[eState.from], nodeMap[eState.to]));
+        scheduleDraw();
+      }
+    }
+    
+    // Create MindMap instance.
+    const mindMap = new MindMap(canvas, ctx);
+    
+    /* --- Modal Rich Text Editor --- */
+    const editorModal = document.getElementById("editorModal");
+    const editorArea = document.getElementById("editorArea");
+    const charCount = document.getElementById("charCount");
+    let editingNode = null;
+    function openEditor(node) {
+      editingNode = node;
+      // Use plain text to avoid HTML tags.
+      editorArea.innerText = node.text;
+      charCount.textContent = "Characters: " + (editorArea.innerText || "").length;
+      editorArea.contentEditable = "true";
+      makeDraggable(editorModal);
+      editorModal.style.display = "block";
+    }
+    editorArea.addEventListener("input", () => {
+      charCount.textContent = "Characters: " + (editorArea.innerText || "").length;
+    });
+    function closeEditor(save) {
+      if (save && editingNode) {
+        let newText = editorArea.innerText.trim();
+        if (newText === "" || newText.toLowerCase() === "<br>") newText = "Empty";
+        editingNode.text = newText;
+        scheduleDraw();
+        pushState();
+      }
+      editorModal.style.display = "none";
+      editingNode = null;
+    }
+    
+    /* --- Modal Configurator --- */
+    const configModal = document.getElementById("configModal");
+    function openConfig() {
+      if (mindMap.selectedNode) {
+        const node = mindMap.selectedNode;
+        document.getElementById("configFill").value = node.color;
+        document.getElementById("configText").value = node.textColor;
+        document.getElementById("configBorder").value = node.strokeColor;
+        document.getElementById("configStroke").value = node.strokeThickness;
+        document.getElementById("configScale").value = node.manualScale;
+        document.getElementById("configFont").value = node.fontFamily;
+        document.getElementById("configFontSize").value = node.fontSize;
+        document.getElementById("configBold").checked = (node.fontWeight === "bold");
+        document.getElementById("configItalic").checked = (node.fontStyle === "italic");
+      }
+      document.getElementById("configLine").value = globalLineColor;
+      document.getElementById("configLineThick").value = globalLineThickness;
+      document.getElementById("configHighlight").value = selectedHighlightColor;
+      configModal.style.display = "block";
+      makeDraggable(configModal);
+    }
+    function closeConfig(apply) {
+      if (apply && mindMap.selectedNode) {
+        let node = mindMap.selectedNode;
+        node.color = document.getElementById("configFill").value;
+        node.textColor = document.getElementById("configText").value;
+        node.strokeColor = document.getElementById("configBorder").value;
+        node.strokeThickness = parseFloat(document.getElementById("configStroke").value);
+        node.manualScale = parseFloat(document.getElementById("configScale").value);
+        node.fontFamily = document.getElementById("configFont").value;
+        node.fontSize = parseInt(document.getElementById("configFontSize").value);
+        node.fontWeight = document.getElementById("configBold").checked ? "bold" : "normal";
+        node.fontStyle = document.getElementById("configItalic").checked ? "italic" : "normal";
+        node._cachedText = null;
+      }
+      if (document.getElementById("edgeGlobal").checked || !mindMap.selectedNode) {
+        globalLineColor = document.getElementById("configLine").value;
+        globalLineThickness = parseFloat(document.getElementById("configLineThick").value);
+        mindMap.edges.forEach(edge => {
+          edge.lineColor = globalLineColor;
+          edge.lineThickness = globalLineThickness;
+        });
+      } else if (mindMap.selectedNode) {
+        const newEdgeColor = document.getElementById("configLine").value;
+        const newEdgeThickness = parseFloat(document.getElementById("configLineThick").value);
+        mindMap.edges.forEach(edge => {
+          if (edge.from === mindMap.selectedNode || edge.to === mindMap.selectedNode) {
+            edge.lineColor = newEdgeColor;
+            edge.lineThickness = newEdgeThickness;
+          }
+        });
+      }
+      selectedHighlightColor = document.getElementById("configHighlight").value;
+      configModal.style.display = "none";
+      scheduleDraw();
+      pushState();
+    }
+    
+    /* --- Draggable Modal (with touch support) --- */
+    function makeDraggable(el) {
+      const header = el.querySelector(".modalHeader");
+      if (!header) return;
+      header.onmousedown = function(e) {
+        e = e || window.event;
+        e.preventDefault();
+        let pos3 = e.clientX, pos4 = e.clientY;
+        document.onmouseup = closeDragElement;
+        document.onmousemove = elementDrag;
+        function elementDrag(e) {
+          e = e || window.event;
+          e.preventDefault();
+          let pos1 = pos3 - e.clientX;
+          let pos2 = pos4 - e.clientY;
+          pos3 = e.clientX;
+          pos4 = e.clientY;
+          el.style.top = (el.offsetTop - pos2) + "px";
+          el.style.left = (el.offsetLeft - pos1) + "px";
+        }
+        function closeDragElement() {
+          document.onmouseup = null;
+          document.onmousemove = null;
+        }
+      };
+      header.addEventListener("touchstart", function(e) {
+        e = e || window.event;
+        e.preventDefault();
+        let pos3 = e.touches[0].clientX, pos4 = e.touches[0].clientY;
+        const touchMove = function(e) {
+          e = e || window.event;
+          e.preventDefault();
+          let clientX = e.touches[0].clientX, clientY = e.touches[0].clientY;
+          let pos1 = pos3 - clientX;
+          let pos2 = pos4 - clientY;
+          pos3 = clientX;
+          pos4 = clientY;
+          el.style.top = (el.offsetTop - pos2) + "px";
+          el.style.left = (el.offsetLeft - pos1) + "px";
+        };
+        const touchEnd = function() {
+          document.removeEventListener("touchmove", touchMove);
+          document.removeEventListener("touchend", touchEnd);
+        };
+        document.addEventListener("touchmove", touchMove, {passive: false});
+        document.addEventListener("touchend", touchEnd);
+      }, {passive: false});
+    }
+    
+    /* --- Undo/Redo and JSON Save/Load --- */
+    function pushState() {
+      undoStack.push(JSON.stringify(mindMap.getState()));
+      redoStack = [];
+    }
+    function undo() {
+      if (undoStack.length > 0) {
+        redoStack.push(JSON.stringify(mindMap.getState()));
+        const prev = JSON.parse(undoStack.pop());
+        mindMap.setState(prev);
+      }
+    }
+    function redo() {
+      if (redoStack.length > 0) {
+        undoStack.push(JSON.stringify(mindMap.getState()));
+        const next = JSON.parse(redoStack.pop());
+        mindMap.setState(next);
+      }
+    }
+    function saveJSON() {
+      const stateStr = JSON.stringify(mindMap.getState(), null, 2);
+      const blob = new Blob([stateStr], {type: "application/json"});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "mindmap.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+    function loadJSON() {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "application/json";
+      input.onchange = e => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = event => {
+          const state = JSON.parse(event.target.result);
+          mindMap.setState(state);
+          pushState();
+        };
+        reader.readAsText(file);
+      };
+      input.click();
+    }
+    
+    /* --- Toolbar functions --- */
+    function newFile() {
+      if (mindMap.nodes.length > 0) {
+        if (confirm("Save current file before creating a new one?")) {
+          saveJSON();
+        }
+      }
+      mindMap.setState({ nodes: [], edges: [] });
+      pushState();
+    }
+    function addCircle() {
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
+      const fill = document.getElementById("configFill").value || "#FFD700";
+      const node = new Node(x, y, "New Circle", "circle", fill);
+      node.textColor = document.getElementById("configText").value || "#000000";
+      node.strokeColor = document.getElementById("configBorder").value || "#333333";
+      node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
+      node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
+      mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    function addSquare() {
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
+      const fill = document.getElementById("configFill").value || "#FFD700";
+      const node = new Node(x, y, "New Square", "square", fill);
+      node.textColor = document.getElementById("configText").value || "#000000";
+      node.strokeColor = document.getElementById("configBorder").value || "#333333";
+      node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
+      node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
+      mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    function addTriangle() {
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
+      const fill = document.getElementById("configFill").value || "#FFD700";
+      const node = new Node(x, y, "New Triangle", "triangle", fill);
+      node.textColor = document.getElementById("configText").value || "#000000";
+      node.strokeColor = document.getElementById("configBorder").value || "#333333";
+      node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
+      node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
+      mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    function addRectangle() {
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
+      const fill = document.getElementById("configFill").value || "#FFD700";
+      const node = new Node(x, y, "New Rectangle", "rectangle", fill);
+      node.textColor = document.getElementById("configText").value || "#000000";
+      node.strokeColor = document.getElementById("configBorder").value || "#333333";
+      node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
+      node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
+      mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    // New function: Add Floating Text
+    function addFloatingText() {
+      const x = (canvas.width / 2) / zoomLevel;
+      const y = (canvas.height / 2) / zoomLevel;
+      const node = new Node(x, y, "New Floating Text", "floating", "transparent");
+      node.textColor = document.getElementById("configText").value || "#000000";
+      node.strokeColor = "transparent";
+      node.strokeThickness = 0;
+      node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
+      mindMap.addNode(node);
+      resetConfigDefaults();
+    }
+    // New function: Add Image Node
+    function addImage() {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/jpeg, image/png, image/gif";
+      input.onchange = e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          const img = new Image();
+          img.onload = function() {
+            const x = (canvas.width / 2) / zoomLevel;
+            const y = (canvas.height / 2) / zoomLevel;
+            const node = new Node(x, y, "", "image", "transparent");
+            node.image = img;
+            // Reset image node defaults:
+            node.manualScale = 1;
+            node.strokeColor = "transparent";
+            node.strokeThickness = 0;
+            mindMap.addNode(node);
+            resetConfigDefaults();
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    }
+    function resetConfigDefaults() {
+      // Reset configuration input values to their defaults.
+      document.getElementById("configFill").value = "#FFD700";
+      document.getElementById("configText").value = "#000000";
+      document.getElementById("configBorder").value = "#333333";
+      document.getElementById("configStroke").value = "2";
+      document.getElementById("configScale").value = "1";
+      document.getElementById("configFont").value = "Roboto, Arial, sans-serif";
+      document.getElementById("configFontSize").value = "16";
+      document.getElementById("configBold").checked = false;
+      document.getElementById("configItalic").checked = false;
+    }
+    function setMode(newMode) {
+      currentMode = newMode;
+      connectionSourceNode = null;
+      updateStatus();
+    }
+    function zoomIn() {
+      zoomLevel *= 1.1;
+      scheduleDraw();
+      updateStatus();
+    }
+    function zoomOut() {
+      zoomLevel /= 1.1;
+      scheduleDraw();
+      updateStatus();
+    }
+    function deleteNode() {
+      if (editorModal.style.display !== "block") {
+        if (mindMap.selectedNode) {
+          mindMap.deleteNode(mindMap.selectedNode);
+        } else {
+          alert("No node selected to delete.");
+        }
+      }
+    }
+    function saveAsImage() {
+      const dataURL = canvas.toDataURL("image/png");
+      const link = document.createElement("a");
+      link.href = dataURL;
+      link.download = "mindmap.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    function updateStatus() {
+      document.getElementById("status").textContent =
+        "Mode: " + (currentMode === Mode.SELECT ? "Select/Move" : currentMode.charAt(0).toUpperCase() + currentMode.slice(1)) +
+        " | Zoom: " + Math.round(zoomLevel * 100) + "%";
+    }
+    
+    /* --- Keyboard shortcuts --- */
+    window.addEventListener("keydown", (event) => {
+      if (editorModal.style.display === "block" && editorArea.contains(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undo();
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        redo();
+      } else if ((event.key === "Delete") && document.activeElement !== editorArea) {
+        deleteNode();
+      } else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
+        // Use event.key as well as keyCode fallback (187 for "=" and 189 for "-")
+        if (event.key === "=" || event.key === "+" || event.keyCode === 187) {
+          if (mindMap.selectedNode.shape === "image") {
+            mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale + 0.1);
+          } else {
+            mindMap.selectedNode.manualScale += 0.1;
+          }
+          scheduleDraw();
+          pushState();
+        } else if (event.key === "-" || event.key === "–" || event.keyCode === 189) {
+          if (mindMap.selectedNode.shape === "image") {
+            mindMap.selectedNode.manualScale = Math.max(0.1, mindMap.selectedNode.manualScale - 0.1);
+          } else {
+            mindMap.selectedNode.manualScale = Math.max(1, mindMap.selectedNode.manualScale - 0.1);
+          }
+          scheduleDraw();
+          pushState();
+        }
+      }
+    });
+    
+    window.addEventListener("resize", () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      scheduleDraw();
+    });
+    
+    // Initialize state.
+    pushState();
+    
+    /* --- Reading Mode Toggle --- */
+    document.getElementById("readingMode").addEventListener("change", function() {
+      editorArea.style.pointerEvents = this.checked ? "none" : "auto";
+      makeDraggable(editorModal);
+    });
+  </script>
+</body>
+</html>
