@@ -368,7 +368,7 @@
             pos4 = e.clientY;
             el.style.left = (el.offsetLeft + dx) + "px";
             el.style.top = (el.offsetTop + dy) + "px";
-            el.style.transform = ""; // remove transform so that it does not offset again
+            el.style.transform = ""; // remove transform so it doesn't offset again
           }
 
           function closeDragElement() {
@@ -400,9 +400,9 @@
         }, { passive: false });
       }
 
-      /*********************
+      /*************************
        * Node Class
-       *********************/
+       *************************/
       class Node {
         constructor(x, y, text = "New Node", shape = 'circle', color = "#FFD700") {
           this.id = nextNodeId++;
@@ -427,6 +427,7 @@
 
         adjustSize(ctx) {
           if (this.shape === "image" && this.image) {
+            // enforce a maximum dimension of 200
             const maxDimension = 200;
             let iw = this.image.naturalWidth;
             let ih = this.image.naturalHeight;
@@ -440,6 +441,7 @@
           const padding = 20;
           let measureTextValue;
 
+          // measure lines if rich text is on, otherwise measure fullText
           if (this.richTextEnabled && this.html) {
             measureTextValue = this.html
               .replace(/<\/p>/gi, "\n")
@@ -486,7 +488,7 @@
           } else if (this.shape === 'verticalRect') {
             let autoHeight = maxLineWidth + padding;
             autoHeight = Math.max(autoHeight, 40 * GOLDEN_RATIO);
-            let autoWidth = (autoHeight / GOLDEN_RATIO);
+            let autoWidth = autoHeight / GOLDEN_RATIO;
             this.displayHeight = autoHeight * this.manualScale;
             this.displayWidth = autoWidth * this.manualScale;
           }
@@ -496,6 +498,7 @@
           this.adjustSize(ctx);
           ctx.textBaseline = "middle";
 
+          // If it's an image node, just draw the image
           if (this.shape === "image" && this.image) {
             ctx.drawImage(
               this.image,
@@ -507,6 +510,7 @@
             return;
           }
 
+          // Otherwise, draw the shape outline (unless floating)
           if (this.shape !== "floating") {
             ctx.beginPath();
             if (this.shape === 'circle') {
@@ -537,6 +541,7 @@
             ctx.stroke();
           }
 
+          // Clip the shape region so text doesn't overflow
           ctx.save();
           if (this.shape === 'circle') {
             ctx.beginPath();
@@ -566,7 +571,7 @@
             ctx.clip();
           }
 
-          // Show full text with formatting if enabled
+          // If rich text is enabled, draw full HTML; otherwise single-line truncated text
           if (this.richTextEnabled && this.html) {
             drawRichText(ctx, this.x, this.y, this.html, this);
           } else {
@@ -583,18 +588,21 @@
             if (this.shape === 'circle') {
               availableWidth = (this.displayRadius - 5) * 2;
             } else if (this.shape === 'triangle') {
+              // narrower width for triangles
               availableWidth = Math.floor(this.displayWidth * 0.7);
             } else {
               availableWidth = this.displayWidth - 10;
             }
 
             let measured = measureText(ctx, firstLine);
+            // Truncate if there's more lines or the single line doesn't fit
             if (measured > availableWidth || hasMore) {
               while (firstLine.length > 0 && measureText(ctx, firstLine + "...") > availableWidth) {
                 firstLine = firstLine.slice(0, -1);
               }
               firstLine += "...";
             }
+
             ctx.fillText(firstLine, this.x, this.y);
           }
 
@@ -613,6 +621,7 @@
               y <= this.y + this.displayHeight / 2
             );
           } else {
+            // rectangle, square, verticalRect, triangle, or floating
             return (
               x >= this.x - this.displayWidth / 2 &&
               x <= this.x + this.displayWidth / 2 &&
@@ -628,9 +637,8 @@
        **********************/
       function drawRichText(ctx, centerX, centerY, rawHtml, node) {
         let lines = parseHtmlIntoLines(rawHtml);
-        if (lines.length === 0) {
-          lines = [["Empty"]];
-        }
+        if (lines.length === 0) lines = [["Empty"]];
+
         let lineHeight = node.fontSize + 4;
         let totalHeight = lines.length * lineHeight;
         let startY = centerY - totalHeight / 2 + lineHeight / 2;
@@ -638,6 +646,7 @@
         for (let i = 0; i < lines.length; i++) {
           let segments = lines[i];
           let totalLineWidth = 0;
+          // measure all segments to handle center alignment
           for (let seg of segments) {
             let actualFontStyle = seg.fontStyle === "italic" ? "italic" : "normal";
             let actualFontWeight = seg.fontWeight === "bold" ? "bold" : "normal";
@@ -649,8 +658,8 @@
             seg.width = segWidth;
             totalLineWidth += segWidth;
           }
-          let currentX = centerX - totalLineWidth / 2;
 
+          let currentX = centerX - totalLineWidth / 2;
           for (let seg of segments) {
             let actualFontStyle = seg.fontStyle === "italic" ? "italic" : "normal";
             let actualFontWeight = seg.fontWeight === "bold" ? "bold" : "normal";
@@ -669,9 +678,9 @@
       }
 
       function parseHtmlIntoLines(rawHtml) {
-        // Convert <div> to <br>
+        // Convert <div> to <br>, remove <div>
         rawHtml = rawHtml.replace(/<div[^>]*>/gi, "<br>").replace(/<\/div>/gi, "");
-        // Convert <p> to <br>, remove open <p>
+        // Convert <p> to <br>, remove <p>
         rawHtml = rawHtml.replace(/<\/p>/gi, "<br>").replace(/<p[^>]*>/gi, "");
 
         let lineHtmls = rawHtml.split(/<br\s*\/?>/i);
@@ -690,6 +699,7 @@
         let isBold = false;
         let isItalic = false;
 
+        // naive split on <b>, <i>, <strong>, <em> tags
         let tokens = lineHtml.split(/(<\/?b>|<\/?i>|<\/?strong>|<\/?em>)/i);
 
         function pushSegmentIfNeeded() {
@@ -746,6 +756,7 @@
       }
 
       function cleanRichTextHTML(html) {
+        // Convert <div> => <br>
         html = html.replace(/<div[^>]*>/gi, "<br>").replace(/<\/div>/gi, "");
         const allowedTags = ['BR', 'B', 'I', 'STRONG', 'EM', 'P'];
         const temp = document.createElement('div');
@@ -895,6 +906,7 @@
               }
               longPressTimer = null;
             }, 600);
+
             let found = false;
             for (let i = this.nodes.length - 1; i >= 0; i--) {
               const node = this.nodes[i];
@@ -1298,6 +1310,8 @@
         pushState();
       }
 
+      // Each shape adds a node, then calls resetConfigDefaults()
+
       function addCircle() {
         const x = canvas.width / 2 / zoomLevel;
         const y = canvas.height / 2 / zoomLevel;
@@ -1308,7 +1322,7 @@
         node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
         node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
         mindMap.addNode(node);
-        resetConfigDefaults();
+        resetConfigDefaults(); // revert config
       }
 
       function addSquare() {
@@ -1372,6 +1386,7 @@
         node.strokeThickness = 0;
         node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
         mindMap.addNode(node);
+        // *** This is the fix for floating text ***
         resetConfigDefaults();
       }
 
@@ -1394,6 +1409,7 @@
               node.strokeColor = "transparent";
               node.strokeThickness = 0;
               mindMap.addNode(node);
+              // *** This is the fix for images ***
               resetConfigDefaults();
             };
             img.src = event.target.result;
@@ -1404,6 +1420,7 @@
       }
 
       function resetConfigDefaults() {
+        // Revert to your chosen defaults after adding node
         document.getElementById("configFill").value = "#FFD700";
         document.getElementById("configText").value = "#000000";
         document.getElementById("configBorder").value = "#333333";
@@ -1488,7 +1505,7 @@
         if (editorModal.style.display === "block" && editorArea.contains(event.target)) {
           return;
         }
-        // Undo/Redo
+        // Undo / Redo
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
           event.preventDefault();
           undo();
@@ -1500,7 +1517,7 @@
         else if (event.key === "Delete" && document.activeElement !== editorArea) {
           deleteNode();
         }
-        // Scale up/down node
+        // Scale node
         else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
           if (event.key === "=" || event.key === "+" || event.keyCode === 187) {
             if (mindMap.selectedNode.shape === "circle") {
@@ -1530,16 +1547,16 @@
         scheduleDraw();
       });
 
-      // Set up initial state
+      // Initialize
       pushState();
 
-      // Provide reading mode toggling
+      // Reading mode toggling
       document.getElementById("readingMode").addEventListener("change", function () {
         editorArea.style.pointerEvents = this.checked ? "none" : "auto";
         makeDraggable(editorModal);
       });
 
-      // Scale images or shapes with dedicated toolbar buttons
+      // scaleImage() handler for toolbar buttons
       function scaleImage(delta) {
         const selected = mindMap.selectedNode;
         if (!selected) return;
@@ -1553,11 +1570,11 @@
         document.getElementById("configScale").value = selected.manualScale;
       }
 
-      // Toggle the main toolbar, also close any open windows
+      // toggleToolbar() also closes the modals
       function toggleToolbar() {
         const toolbar = document.getElementById("toolbar");
         toolbar.style.display = (toolbar.style.display === "none") ? "flex" : "none";
-        // Also close editor/config if they are open
+        // also close editor/config if open
         editorModal.style.display = "none";
         configModal.style.display = "none";
       }
