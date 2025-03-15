@@ -307,7 +307,7 @@
       let redoStack = [];
       let connectionSourceNode = null;
 
-      // Global text measurement cache for performance
+      // For measuring text quickly without re-measuring duplicates
       const measureCache = new Map();
       function measureText(ctx, text) {
         const key = ctx.font + "|" + text;
@@ -338,56 +338,52 @@
       const Mode = { SELECT: 'select', CONNECT: 'connect', DISCONNECT: 'disconnect' };
       let currentMode = Mode.SELECT;
 
-      /*******************************
-       * Make modals always re-center
-       *******************************/
+      /*******************************/
+      /*   Centering + Draggable     */
+      /*******************************/
       function centerModal(modal) {
-        // Set initial position to center
         modal.style.left = "50%";
         modal.style.top = "50%";
         modal.style.transform = "translate(-50%, -50%)";
       }
 
-      /***********************
-       * Draggable Modals    *
-       ***********************/
       function makeDraggable(el) {
         const header = el.querySelector(".modalHeader");
         if (!header) return;
         header.onmousedown = function (e) {
           e.preventDefault();
-          let pos3 = e.clientX, pos4 = e.clientY;
+          let startX = e.clientX, startY = e.clientY;
           document.onmouseup = closeDragElement;
           document.onmousemove = elementDrag;
 
           function elementDrag(e) {
             e.preventDefault();
-            let dx = e.clientX - pos3;
-            let dy = e.clientY - pos4;
-            pos3 = e.clientX;
-            pos4 = e.clientY;
+            let dx = e.clientX - startX;
+            let dy = e.clientY - startY;
+            startX = e.clientX;
+            startY = e.clientY;
             el.style.left = (el.offsetLeft + dx) + "px";
             el.style.top = (el.offsetTop + dy) + "px";
-            el.style.transform = ""; // remove transform so it doesn't offset again
+            el.style.transform = ""; // remove transform once moved
           }
-
           function closeDragElement() {
             document.onmouseup = null;
             document.onmousemove = null;
           }
         };
+        // Touch support
         header.addEventListener("touchstart", function (e) {
           e.preventDefault();
-          let startX = e.touches[0].clientX;
-          let startY = e.touches[0].clientY;
+          let initX = e.touches[0].clientX;
+          let initY = e.touches[0].clientY;
           let initLeft = el.offsetLeft;
           let initTop = el.offsetTop;
-          el.style.transform = ""; // reset transform so the offset doesn't stack
+          el.style.transform = "";
 
           function touchMove(ev) {
             ev.preventDefault();
-            let dx = ev.touches[0].clientX - startX;
-            let dy = ev.touches[0].clientY - startY;
+            let dx = ev.touches[0].clientX - initX;
+            let dy = ev.touches[0].clientY - initY;
             el.style.left = (initLeft + dx) + "px";
             el.style.top = (initTop + dy) + "px";
           }
@@ -400,9 +396,9 @@
         }, { passive: false });
       }
 
-      /*************************
-       * Node Class
-       *************************/
+      /****************************
+       *  Node Class + Rendering  *
+       ****************************/
       class Node {
         constructor(x, y, text = "New Node", shape = 'circle', color = "#FFD700") {
           this.id = nextNodeId++;
@@ -426,8 +422,8 @@
         }
 
         adjustSize(ctx) {
+          // If image node, scale to max 200
           if (this.shape === "image" && this.image) {
-            // enforce a maximum dimension of 200
             const maxDimension = 200;
             let iw = this.image.naturalWidth;
             let ih = this.image.naturalHeight;
@@ -441,7 +437,6 @@
           const padding = 20;
           let measureTextValue;
 
-          // measure lines if rich text is on, otherwise measure fullText
           if (this.richTextEnabled && this.html) {
             measureTextValue = this.html
               .replace(/<\/p>/gi, "\n")
@@ -479,6 +474,7 @@
             this.displayWidth = autoWidth * this.manualScale;
             this.displayHeight = Math.round(autoWidth * Math.sqrt(3) / 2) * this.manualScale;
           } else if (this.shape === 'floating') {
+            // Only text dimension
             let textWidth = 0;
             for (let ln of lines) {
               textWidth = Math.max(textWidth, measureText(ctx, ln));
@@ -498,8 +494,8 @@
           this.adjustSize(ctx);
           ctx.textBaseline = "middle";
 
-          // If it's an image node, just draw the image
           if (this.shape === "image" && this.image) {
+            // Draw the image
             ctx.drawImage(
               this.image,
               this.x - this.displayWidth / 2,
@@ -510,7 +506,7 @@
             return;
           }
 
-          // Otherwise, draw the shape outline (unless floating)
+          // Otherwise, draw the shape (unless floating)
           if (this.shape !== "floating") {
             ctx.beginPath();
             if (this.shape === 'circle') {
@@ -541,7 +537,7 @@
             ctx.stroke();
           }
 
-          // Clip the shape region so text doesn't overflow
+          // Clip region
           ctx.save();
           if (this.shape === 'circle') {
             ctx.beginPath();
@@ -571,7 +567,7 @@
             ctx.clip();
           }
 
-          // If rich text is enabled, draw full HTML; otherwise single-line truncated text
+          // Draw text or rich text
           if (this.richTextEnabled && this.html) {
             drawRichText(ctx, this.x, this.y, this.html, this);
           } else {
@@ -588,21 +584,18 @@
             if (this.shape === 'circle') {
               availableWidth = (this.displayRadius - 5) * 2;
             } else if (this.shape === 'triangle') {
-              // narrower width for triangles
               availableWidth = Math.floor(this.displayWidth * 0.7);
             } else {
               availableWidth = this.displayWidth - 10;
             }
 
             let measured = measureText(ctx, firstLine);
-            // Truncate if there's more lines or the single line doesn't fit
             if (measured > availableWidth || hasMore) {
               while (firstLine.length > 0 && measureText(ctx, firstLine + "...") > availableWidth) {
                 firstLine = firstLine.slice(0, -1);
               }
               firstLine += "...";
             }
-
             ctx.fillText(firstLine, this.x, this.y);
           }
 
@@ -621,7 +614,6 @@
               y <= this.y + this.displayHeight / 2
             );
           } else {
-            // rectangle, square, verticalRect, triangle, or floating
             return (
               x >= this.x - this.displayWidth / 2 &&
               x <= this.x + this.displayWidth / 2 &&
@@ -632,9 +624,9 @@
         }
       }
 
-      /**********************
-       * Rich Text Rendering
-       **********************/
+      /*************************
+       * Rich Text + Helpers   *
+       *************************/
       function drawRichText(ctx, centerX, centerY, rawHtml, node) {
         let lines = parseHtmlIntoLines(rawHtml);
         if (lines.length === 0) lines = [["Empty"]];
@@ -646,7 +638,6 @@
         for (let i = 0; i < lines.length; i++) {
           let segments = lines[i];
           let totalLineWidth = 0;
-          // measure all segments to handle center alignment
           for (let seg of segments) {
             let actualFontStyle = seg.fontStyle === "italic" ? "italic" : "normal";
             let actualFontWeight = seg.fontWeight === "bold" ? "bold" : "normal";
@@ -678,9 +669,9 @@
       }
 
       function parseHtmlIntoLines(rawHtml) {
-        // Convert <div> to <br>, remove <div>
+        // Convert <div> => <br>
         rawHtml = rawHtml.replace(/<div[^>]*>/gi, "<br>").replace(/<\/div>/gi, "");
-        // Convert <p> to <br>, remove <p>
+        // Convert <p> => <br>, remove <p>
         rawHtml = rawHtml.replace(/<\/p>/gi, "<br>").replace(/<p[^>]*>/gi, "");
 
         let lineHtmls = rawHtml.split(/<br\s*\/?>/i);
@@ -699,7 +690,6 @@
         let isBold = false;
         let isItalic = false;
 
-        // naive split on <b>, <i>, <strong>, <em> tags
         let tokens = lineHtml.split(/(<\/?b>|<\/?i>|<\/?strong>|<\/?em>)/i);
 
         function pushSegmentIfNeeded() {
@@ -779,9 +769,9 @@
         return temp.innerHTML;
       }
 
-      /*********************
-       * Edge Class
-       *********************/
+      /***********************
+       *  Edge Class         *
+       ***********************/
       class Edge {
         constructor(from, to) {
           this.from = from;
@@ -800,9 +790,9 @@
         }
       }
 
-      /*********************
-       * MindMap Class
-       *********************/
+      /***********************
+       *  MindMap Class      *
+       ***********************/
       class MindMap {
         constructor(canvas, ctx) {
           this.canvas = canvas;
@@ -834,36 +824,57 @@
             if (editorModal.style.display === "block") return;
             const { x, y } = this.getWorldCoords(event);
             let found = false;
+            let clickedNode = null;
+
+            // Try to find a node that was clicked
             for (let i = this.nodes.length - 1; i >= 0; i--) {
               const node = this.nodes[i];
               if (node.contains(x, y)) {
                 this.selectedNode = node;
                 found = true;
+                clickedNode = node;
                 if (currentMode === Mode.SELECT) {
                   this.dragging = true;
-                }
-                if (currentMode === Mode.CONNECT || currentMode === Mode.DISCONNECT) {
-                  if (!connectionSourceNode) {
-                    connectionSourceNode = node;
-                  } else if (connectionSourceNode !== node) {
-                    if (currentMode === Mode.CONNECT) {
-                      if (!this.edgeExists(connectionSourceNode, node)) {
-                        this.edges.push(new Edge(connectionSourceNode, node));
-                        pushState();
-                      }
-                    } else if (currentMode === Mode.DISCONNECT) {
-                      this.removeEdge(connectionSourceNode, node);
-                      pushState();
-                    }
-                    connectionSourceNode = null;
-                  }
                 }
                 break;
               }
             }
+
             if (!found) {
+              // If we are in CONNECT or DISCONNECT mode and clicked empty space,
+              // show a warning that user must click on a valid node.
+              if (currentMode === Mode.CONNECT) {
+                alert("Please click on a valid node to connect.");
+              } else if (currentMode === Mode.DISCONNECT) {
+                alert("Please click on a valid node to disconnect.");
+              }
+              // Otherwise, we simply select nothing.
               this.selectedNode = null;
+            } else {
+              // found a node
+              if (currentMode === Mode.CONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = clickedNode; // first node
+                } else if (connectionSourceNode !== clickedNode) {
+                  // connect
+                  if (!this.edgeExists(connectionSourceNode, clickedNode)) {
+                    this.edges.push(new Edge(connectionSourceNode, clickedNode));
+                    pushState();
+                  }
+                  connectionSourceNode = null; // reset
+                }
+              } else if (currentMode === Mode.DISCONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = clickedNode;
+                } else if (connectionSourceNode !== clickedNode) {
+                  // remove edge if it exists
+                  this.removeEdge(connectionSourceNode, clickedNode);
+                  pushState();
+                  connectionSourceNode = null;
+                }
+              }
             }
+
             scheduleDraw();
             updateStatus();
           });
@@ -893,9 +904,12 @@
             }
           });
 
+          // Touch events for mobile
           this.canvas.addEventListener("touchstart", (event) => {
             event.preventDefault();
             const { x, y } = this.getWorldCoords(event);
+
+            // Long press => open editor
             longPressTimer = setTimeout(() => {
               for (let i = this.nodes.length - 1; i >= 0; i--) {
                 const node = this.nodes[i];
@@ -908,35 +922,46 @@
             }, 600);
 
             let found = false;
+            let clickedNode = null;
             for (let i = this.nodes.length - 1; i >= 0; i--) {
               const node = this.nodes[i];
               if (node.contains(x, y)) {
                 this.selectedNode = node;
                 found = true;
+                clickedNode = node;
                 if (currentMode === Mode.SELECT) {
                   this.dragging = true;
-                }
-                if (currentMode === Mode.CONNECT || currentMode === Mode.DISCONNECT) {
-                  if (!connectionSourceNode) {
-                    connectionSourceNode = node;
-                  } else if (connectionSourceNode !== node) {
-                    if (currentMode === Mode.CONNECT) {
-                      if (!this.edgeExists(connectionSourceNode, node)) {
-                        this.edges.push(new Edge(connectionSourceNode, node));
-                        pushState();
-                      }
-                    } else if (currentMode === Mode.DISCONNECT) {
-                      this.removeEdge(connectionSourceNode, node);
-                      pushState();
-                    }
-                    connectionSourceNode = null;
-                  }
                 }
                 break;
               }
             }
             if (!found) {
+              if (currentMode === Mode.CONNECT) {
+                alert("Please click on a valid node to connect.");
+              } else if (currentMode === Mode.DISCONNECT) {
+                alert("Please click on a valid node to disconnect.");
+              }
               this.selectedNode = null;
+            } else {
+              if (currentMode === Mode.CONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = clickedNode;
+                } else if (connectionSourceNode !== clickedNode) {
+                  if (!this.edgeExists(connectionSourceNode, clickedNode)) {
+                    this.edges.push(new Edge(connectionSourceNode, clickedNode));
+                    pushState();
+                  }
+                  connectionSourceNode = null;
+                }
+              } else if (currentMode === Mode.DISCONNECT) {
+                if (!connectionSourceNode) {
+                  connectionSourceNode = clickedNode;
+                } else if (connectionSourceNode !== clickedNode) {
+                  this.removeEdge(connectionSourceNode, clickedNode);
+                  pushState();
+                  connectionSourceNode = null;
+                }
+              }
             }
             scheduleDraw();
             updateStatus();
@@ -1009,14 +1034,15 @@
           ctx.save();
           ctx.scale(zoomLevel, zoomLevel);
 
-          // Draw edges
+          // Draw edges first
           for (let edge of this.edges) {
             edge.draw(ctx);
           }
 
-          // Draw nodes
+          // Then nodes
           for (let node of this.nodes) {
             node.draw(ctx);
+
             // highlight if selected
             if (node === this.selectedNode) {
               ctx.save();
@@ -1138,9 +1164,7 @@
       let editingNode = null;
 
       function openEditor(node) {
-        // Re-center the editor modal
         centerModal(editorModal);
-
         editingNode = node;
         if (node.richTextEnabled && node.html) {
           editorArea.innerHTML = node.html;
@@ -1187,7 +1211,6 @@
        *************************/
       const configModal = document.getElementById("configModal");
       function openConfig() {
-        // Re-center the config modal
         centerModal(configModal);
 
         if (mindMap.selectedNode) {
@@ -1206,8 +1229,8 @@
         document.getElementById("configLine").value = globalLineColor;
         document.getElementById("configLineThick").value = globalLineThickness;
         document.getElementById("configHighlight").value = selectedHighlightColor;
-        configModal.style.display = "block";
         makeDraggable(configModal);
+        configModal.style.display = "block";
       }
 
       function closeConfig(apply) {
@@ -1247,9 +1270,9 @@
         pushState();
       }
 
-      /**************************
-       * Undo/Redo & JSON
-       **************************/
+      /***************************
+       * Undo/Redo + JSON Export *
+       ***************************/
       function pushState() {
         undoStack.push(JSON.stringify(mindMap.getState()));
         redoStack = [];
@@ -1297,9 +1320,9 @@
         input.click();
       }
 
-      /***********************
-       * Toolbar Functions
-       ***********************/
+      /************************
+       * Toolbar Functions    *
+       ************************/
       function newFile() {
         if (mindMap.nodes.length > 0) {
           if (confirm("Save current file before creating a new one?")) {
@@ -1310,8 +1333,7 @@
         pushState();
       }
 
-      // Each shape adds a node, then calls resetConfigDefaults()
-
+      // shape creation + resetting config afterwards
       function addCircle() {
         const x = canvas.width / 2 / zoomLevel;
         const y = canvas.height / 2 / zoomLevel;
@@ -1322,7 +1344,7 @@
         node.strokeThickness = parseFloat(document.getElementById("configStroke").value) || 2;
         node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
         mindMap.addNode(node);
-        resetConfigDefaults(); // revert config
+        resetConfigDefaults();
       }
 
       function addSquare() {
@@ -1386,7 +1408,6 @@
         node.strokeThickness = 0;
         node.manualScale = parseFloat(document.getElementById("configScale").value) || 1;
         mindMap.addNode(node);
-        // *** This is the fix for floating text ***
         resetConfigDefaults();
       }
 
@@ -1409,7 +1430,6 @@
               node.strokeColor = "transparent";
               node.strokeThickness = 0;
               mindMap.addNode(node);
-              // *** This is the fix for images ***
               resetConfigDefaults();
             };
             img.src = event.target.result;
@@ -1420,7 +1440,6 @@
       }
 
       function resetConfigDefaults() {
-        // Revert to your chosen defaults after adding node
         document.getElementById("configFill").value = "#FFD700";
         document.getElementById("configText").value = "#000000";
         document.getElementById("configBorder").value = "#333333";
@@ -1432,7 +1451,27 @@
         document.getElementById("configItalic").checked = false;
       }
 
+      // Enhanced setMode function with checks
       function setMode(newMode) {
+        // If user clicks the Connect button, but hasn't selected a node => warn + revert
+        if (newMode === Mode.CONNECT) {
+          if (!mindMap.selectedNode) {
+            alert("Select a node first before pressing Connect!");
+            currentMode = Mode.SELECT;
+            updateStatus();
+            return;
+          }
+        }
+        // If user clicks the Disconnect button, but no node selected => warn + revert
+        if (newMode === Mode.DISCONNECT) {
+          if (!mindMap.selectedNode) {
+            alert("No node selected to disconnect from!");
+            currentMode = Mode.SELECT;
+            updateStatus();
+            return;
+          }
+        }
+
         currentMode = newMode;
         connectionSourceNode = null;
         updateStatus();
@@ -1498,9 +1537,7 @@
           "%";
       }
 
-      /***********************
-       * Keyboard Shortcuts
-       ***********************/
+      // Keyboard shortcuts
       window.addEventListener("keydown", (event) => {
         if (editorModal.style.display === "block" && editorArea.contains(event.target)) {
           return;
@@ -1547,7 +1584,7 @@
         scheduleDraw();
       });
 
-      // Initialize
+      // Initialize the MindMap with an empty state
       pushState();
 
       // Reading mode toggling
@@ -1556,7 +1593,7 @@
         makeDraggable(editorModal);
       });
 
-      // scaleImage() handler for toolbar buttons
+      // scaleImage() invoked by the plus/minus toolbar
       function scaleImage(delta) {
         const selected = mindMap.selectedNode;
         if (!selected) return;
@@ -1570,7 +1607,7 @@
         document.getElementById("configScale").value = selected.manualScale;
       }
 
-      // toggleToolbar() also closes the modals
+      // toggleToolbar also closes any open modals
       function toggleToolbar() {
         const toolbar = document.getElementById("toolbar");
         toolbar.style.display = (toolbar.style.display === "none") ? "flex" : "none";
