@@ -117,8 +117,8 @@
         border: 1px solid #ccc;
         padding: 8px;
         margin-top: 8px;
-        overflow-y: auto;       /* allow vertical scroll */
-        overflow-x: hidden;     /* prevent horizontal scroll bar */
+        overflow-y: auto;
+        overflow-x: hidden;
         white-space: pre-wrap;
         word-wrap: break-word;
         background: #fefefe;
@@ -307,7 +307,7 @@
       let redoStack = [];
       let connectionSourceNode = null;
 
-      // Caches text measurements for performance
+      // Global text measurement cache for performance
       const measureCache = new Map();
       function measureText(ctx, text) {
         const key = ctx.font + "|" + text;
@@ -338,9 +338,71 @@
       const Mode = { SELECT: 'select', CONNECT: 'connect', DISCONNECT: 'disconnect' };
       let currentMode = Mode.SELECT;
 
-      /*****************
-       * Node Class    *
-       *****************/
+      /*******************************
+       * Make modals always re-center
+       *******************************/
+      function centerModal(modal) {
+        // Set initial position to center
+        modal.style.left = "50%";
+        modal.style.top = "50%";
+        modal.style.transform = "translate(-50%, -50%)";
+      }
+
+      /***********************
+       * Draggable Modals    *
+       ***********************/
+      function makeDraggable(el) {
+        const header = el.querySelector(".modalHeader");
+        if (!header) return;
+        header.onmousedown = function (e) {
+          e.preventDefault();
+          let pos3 = e.clientX, pos4 = e.clientY;
+          document.onmouseup = closeDragElement;
+          document.onmousemove = elementDrag;
+
+          function elementDrag(e) {
+            e.preventDefault();
+            let dx = e.clientX - pos3;
+            let dy = e.clientY - pos4;
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            el.style.left = (el.offsetLeft + dx) + "px";
+            el.style.top = (el.offsetTop + dy) + "px";
+            el.style.transform = ""; // remove transform so that it does not offset again
+          }
+
+          function closeDragElement() {
+            document.onmouseup = null;
+            document.onmousemove = null;
+          }
+        };
+        header.addEventListener("touchstart", function (e) {
+          e.preventDefault();
+          let startX = e.touches[0].clientX;
+          let startY = e.touches[0].clientY;
+          let initLeft = el.offsetLeft;
+          let initTop = el.offsetTop;
+          el.style.transform = ""; // reset transform so the offset doesn't stack
+
+          function touchMove(ev) {
+            ev.preventDefault();
+            let dx = ev.touches[0].clientX - startX;
+            let dy = ev.touches[0].clientY - startY;
+            el.style.left = (initLeft + dx) + "px";
+            el.style.top = (initTop + dy) + "px";
+          }
+          function touchEnd() {
+            document.removeEventListener("touchmove", touchMove);
+            document.removeEventListener("touchend", touchEnd);
+          }
+          document.addEventListener("touchmove", touchMove, { passive: false });
+          document.addEventListener("touchend", touchEnd);
+        }, { passive: false });
+      }
+
+      /*********************
+       * Node Class
+       *********************/
       class Node {
         constructor(x, y, text = "New Node", shape = 'circle', color = "#FFD700") {
           this.id = nextNodeId++;
@@ -349,21 +411,20 @@
           this.fullText = text || "New Node";
           this.text = this.fullText;
           this.shape = shape;
-          this.color = color;             
-          this.textColor = "#000000";     
-          this.strokeColor = "#333333";  
+          this.color = color;
+          this.textColor = "#000000";
+          this.strokeColor = "#333333";
           this.strokeThickness = 2;
           this.manualScale = 1;
           this.fontFamily = "Roboto, Arial, sans-serif";
           this.fontSize = 16;
-          this.fontWeight = "normal";  
-          this.fontStyle = "normal";   
+          this.fontWeight = "normal";
+          this.fontStyle = "normal";
           this.image = null;
           this.richTextEnabled = false;
-          this.html = null;            
+          this.html = null;
         }
 
-        // Resizes the node
         adjustSize(ctx) {
           if (this.shape === "image" && this.image) {
             const maxDimension = 200;
@@ -450,7 +511,11 @@
             ctx.beginPath();
             if (this.shape === 'circle') {
               ctx.arc(this.x, this.y, this.displayRadius, 0, Math.PI * 2);
-            } else if (this.shape === 'square' || this.shape === 'rectangle' || this.shape === 'verticalRect') {
+            } else if (
+              this.shape === 'square' ||
+              this.shape === 'rectangle' ||
+              this.shape === 'verticalRect'
+            ) {
               ctx.rect(
                 this.x - this.displayWidth / 2,
                 this.y - this.displayHeight / 2,
@@ -501,7 +566,7 @@
             ctx.clip();
           }
 
-          // Draw text
+          // Show full text with formatting if enabled
           if (this.richTextEnabled && this.html) {
             drawRichText(ctx, this.x, this.y, this.html, this);
           } else {
@@ -561,7 +626,6 @@
       /**********************
        * Rich Text Rendering
        **********************/
-
       function drawRichText(ctx, centerX, centerY, rawHtml, node) {
         let lines = parseHtmlIntoLines(rawHtml);
         if (lines.length === 0) {
@@ -577,12 +641,8 @@
           for (let seg of segments) {
             let actualFontStyle = seg.fontStyle === "italic" ? "italic" : "normal";
             let actualFontWeight = seg.fontWeight === "bold" ? "bold" : "normal";
-            let actualFontSize = node.fontSize; 
-            let actualFontFamily = node.fontFamily; 
-            if (seg.fontSize) {
-              // we can override if needed, but typically we match node's
-              actualFontSize = node.fontSize;
-            }
+            let actualFontSize = node.fontSize;
+            let actualFontFamily = node.fontFamily;
             ctx.font = `${actualFontStyle} ${actualFontWeight} ${actualFontSize}px ${actualFontFamily}`;
 
             let segWidth = measureText(ctx, seg.text);
@@ -598,7 +658,7 @@
             let actualFontFamily = node.fontFamily;
 
             ctx.font = `${actualFontStyle} ${actualFontWeight} ${actualFontSize}px ${actualFontFamily}`;
-            ctx.fillStyle = node.textColor; 
+            ctx.fillStyle = node.textColor;
             ctx.textBaseline = "middle";
             ctx.textAlign = "left";
 
@@ -609,15 +669,12 @@
       }
 
       function parseHtmlIntoLines(rawHtml) {
-        // Replace <div> with <br> to avoid leftover <div> tags:
+        // Convert <div> to <br>
         rawHtml = rawHtml.replace(/<div[^>]*>/gi, "<br>").replace(/<\/div>/gi, "");
-        
-        // Convert <p> to <br>, then remove the open <p> tags
-        let replaced = rawHtml
-          .replace(/<\/p>/gi, "<br>")
-          .replace(/<p[^>]*>/gi, "");
+        // Convert <p> to <br>, remove open <p>
+        rawHtml = rawHtml.replace(/<\/p>/gi, "<br>").replace(/<p[^>]*>/gi, "");
 
-        let lineHtmls = replaced.split(/<br\s*\/?>/i);
+        let lineHtmls = rawHtml.split(/<br\s*\/?>/i);
         let allLines = [];
         for (let lineHtml of lineHtmls) {
           let trimmed = lineHtml.trim();
@@ -641,7 +698,7 @@
               text: currentText,
               fontWeight: isBold ? "bold" : "normal",
               fontStyle: isItalic ? "italic" : "normal",
-              fontSize: 16, 
+              fontSize: 16,
               fontFamily: "Roboto, Arial, sans-serif",
               fillStyle: "#000000",
               width: 0
@@ -688,9 +745,7 @@
         return segments;
       }
 
-      // Clean up HTML to allowed tags only; also handles <div> → <br>
       function cleanRichTextHTML(html) {
-        // Also replace <div> with <br> so you never see <div> in your node text
         html = html.replace(/<div[^>]*>/gi, "<br>").replace(/<\/div>/gi, "");
         const allowedTags = ['BR', 'B', 'I', 'STRONG', 'EM', 'P'];
         const temp = document.createElement('div');
@@ -714,7 +769,7 @@
       }
 
       /*********************
-       * Edge Class        *
+       * Edge Class
        *********************/
       class Edge {
         constructor(from, to) {
@@ -735,7 +790,7 @@
       }
 
       /*********************
-       * MindMap Class     *
+       * MindMap Class
        *********************/
       class MindMap {
         constructor(canvas, ctx) {
@@ -919,9 +974,7 @@
         }
 
         addNode(node) {
-          if (node.fullText.trim() === "" && node.shape !== "image") {
-            return;
-          }
+          if (node.fullText.trim() === "" && node.shape !== "image") return;
           this.nodes.push(node);
           scheduleDraw();
           pushState();
@@ -952,7 +1005,6 @@
           // Draw nodes
           for (let node of this.nodes) {
             node.draw(ctx);
-
             // highlight if selected
             if (node === this.selectedNode) {
               ctx.save();
@@ -1066,7 +1118,7 @@
       const mindMap = new MindMap(canvas, ctx);
 
       /*************************
-       * Modal Rich Text Editor
+       * Editor Modal
        *************************/
       const editorModal = document.getElementById("editorModal");
       const editorArea = document.getElementById("editorArea");
@@ -1074,6 +1126,9 @@
       let editingNode = null;
 
       function openEditor(node) {
+        // Re-center the editor modal
+        centerModal(editorModal);
+
         editingNode = node;
         if (node.richTextEnabled && node.html) {
           editorArea.innerHTML = node.html;
@@ -1101,7 +1156,6 @@
           editingNode.fullText = newText;
           editingNode.text = newText;
 
-          // If config checkbox is checked => store as rich text
           if (document.getElementById("configRichText").checked) {
             editingNode.richTextEnabled = true;
             editingNode.html = cleanRichTextHTML(editorArea.innerHTML);
@@ -1117,10 +1171,13 @@
       }
 
       /*************************
-       * Modal Configurator    *
+       * Config Modal
        *************************/
       const configModal = document.getElementById("configModal");
       function openConfig() {
+        // Re-center the config modal
+        centerModal(configModal);
+
         if (mindMap.selectedNode) {
           const node = mindMap.selectedNode;
           document.getElementById("configFill").value = node.color;
@@ -1155,7 +1212,6 @@
           node.fontStyle = document.getElementById("configItalic").checked ? "italic" : "normal";
           node.richTextEnabled = document.getElementById("configRichText").checked;
         }
-        // Edges
         if (document.getElementById("edgeGlobal").checked || !mindMap.selectedNode) {
           globalLineColor = document.getElementById("configLine").value;
           globalLineThickness = parseFloat(document.getElementById("configLineThick").value);
@@ -1179,58 +1235,9 @@
         pushState();
       }
 
-      /*********************
-       * Draggable Modal   *
-       *********************/
-      function makeDraggable(el) {
-        const header = el.querySelector(".modalHeader");
-        if (!header) return;
-        header.onmousedown = function (e) {
-          e.preventDefault();
-          let pos3 = e.clientX, pos4 = e.clientY;
-          document.onmouseup = closeDragElement;
-          document.onmousemove = elementDrag;
-          function elementDrag(e) {
-            e.preventDefault();
-            let pos1 = pos3 - e.clientX;
-            let pos2 = pos4 - e.clientY;
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            el.style.top = (el.offsetTop - pos2) + "px";
-            el.style.left = (el.offsetLeft - pos1) + "px";
-          }
-          function closeDragElement() {
-            document.onmouseup = null;
-            document.onmousemove = null;
-          }
-        };
-        // Touch support
-        header.addEventListener("touchstart", function (e) {
-          e.preventDefault();
-          let pos3 = e.touches[0].clientX, pos4 = e.touches[0].clientY;
-          const touchMove = (ev) => {
-            ev.preventDefault();
-            let clientX = ev.touches[0].clientX;
-            let clientY = ev.touches[0].clientY;
-            let pos1 = pos3 - clientX;
-            let pos2 = pos4 - clientY;
-            pos3 = clientX;
-            pos4 = clientY;
-            el.style.top = (el.offsetTop - pos2) + "px";
-            el.style.left = (el.offsetLeft - pos1) + "px";
-          };
-          const touchEnd = () => {
-            document.removeEventListener("touchmove", touchMove);
-            document.removeEventListener("touchend", touchEnd);
-          };
-          document.addEventListener("touchmove", touchMove, { passive: false });
-          document.addEventListener("touchend", touchEnd);
-        }, { passive: false });
-      }
-
-      /*******************************
-       * Undo/Redo & JSON Functions *
-       *******************************/
+      /**************************
+       * Undo/Redo & JSON
+       **************************/
       function pushState() {
         undoStack.push(JSON.stringify(mindMap.getState()));
         redoStack = [];
@@ -1279,7 +1286,7 @@
       }
 
       /***********************
-       * Toolbar Functions   *
+       * Toolbar Functions
        ***********************/
       function newFile() {
         if (mindMap.nodes.length > 0) {
@@ -1475,21 +1482,26 @@
       }
 
       /***********************
-       * Keyboard Shortcuts  *
+       * Keyboard Shortcuts
        ***********************/
       window.addEventListener("keydown", (event) => {
         if (editorModal.style.display === "block" && editorArea.contains(event.target)) {
           return;
         }
+        // Undo/Redo
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
           event.preventDefault();
           undo();
         } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "z") {
           event.preventDefault();
           redo();
-        } else if (event.key === "Delete" && document.activeElement !== editorArea) {
+        }
+        // Delete
+        else if (event.key === "Delete" && document.activeElement !== editorArea) {
           deleteNode();
-        } else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
+        }
+        // Scale up/down node
+        else if (mindMap.selectedNode && currentMode === Mode.SELECT) {
           if (event.key === "=" || event.key === "+" || event.keyCode === 187) {
             if (mindMap.selectedNode.shape === "circle") {
               mindMap.selectedNode.manualScale = Math.max(MIN_CIRCLE_SCALE, mindMap.selectedNode.manualScale + 0.1);
@@ -1518,13 +1530,16 @@
         scheduleDraw();
       });
 
+      // Set up initial state
       pushState();
 
+      // Provide reading mode toggling
       document.getElementById("readingMode").addEventListener("change", function () {
         editorArea.style.pointerEvents = this.checked ? "none" : "auto";
         makeDraggable(editorModal);
       });
 
+      // Scale images or shapes with dedicated toolbar buttons
       function scaleImage(delta) {
         const selected = mindMap.selectedNode;
         if (!selected) return;
@@ -1538,9 +1553,13 @@
         document.getElementById("configScale").value = selected.manualScale;
       }
 
+      // Toggle the main toolbar, also close any open windows
       function toggleToolbar() {
         const toolbar = document.getElementById("toolbar");
         toolbar.style.display = (toolbar.style.display === "none") ? "flex" : "none";
+        // Also close editor/config if they are open
+        editorModal.style.display = "none";
+        configModal.style.display = "none";
       }
     </script>
   </body>
